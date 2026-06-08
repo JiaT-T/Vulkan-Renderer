@@ -1,0 +1,46 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 29,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs18-x64-debug",
+      "displayName": "Visual Studio 18 Insiders x64 Debug",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_GENERATOR_INSTANCE": "C:/Program Files/Microsoft Visual Studio/18/Insiders,version=18.4.11519.219",
+        "CMAKE_TOOLCHAIN_FILE": "D:/Computer Graphics/Vulkan/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      },
+      "environment": {
+        "VULKAN_SDK": "D:/VulkanSDK/1.4.350.0",
+        "VK_SDK_PATH": "D:/VulkanSDK/1.4.350.0",
+        "VK_LAYER_PATH": "D:/VulkanSDK/1.4.350.0/Bin",
+        "VCPKG_DEFAULT_BINARY_CACHE": "D:/Computer Graphics/Vulkan/.deps/vcpkg-binary-cache"
+      }
+    },
+    {
+      "name": "vs18-x64-release",
+      "displayName": "Visual Studio 18 Insiders x64 Release",
+      "inherits": "vs18-x64-debug",
+      "binaryDir": "${sourceDir}/out/build/${presetName}"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs18-x64-debug",
+      "configurePreset": "vs18-x64-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs18-x64-release",
+      "configurePreset": "vs18-x64-release",
+      "configuration": "Release"
+    }
+  ]
+}
