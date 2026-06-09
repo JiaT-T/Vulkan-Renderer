@@ -3,6 +3,9 @@
 
 namespace vulkan
 {
+// 指定窗口大小
+// 因为是全局变量，所以需要在类外定义，使用constexpr来确保它在编译时就被初始化，并且在程序运行期间保持不变
+constexpr VkExtent2D defaultWindowSize = { 1280, 720 };
 // 一个单例类
 // 用于管理 Vulkan 中那些最基础的对象和行为
 class graphicsBase
@@ -609,7 +612,49 @@ private :
 	//该函数被CreateSwapchain(...)和RecreateSwapchain()调用
 	VkResult CreateSwapchain_Internal()
 	{
-		/*待Ch1-4填充*/
+		// 创建交换链
+		if (VkResult result = vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain))
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a swapchain!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+
+		// 创建交换链图像
+		uint32_t swapchainImageCount;
+		if (VkResult result = vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, nullptr))
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of swapchain images!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		swapchainImages.resize(swapchainImageCount);
+		if (VkResult result = vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()))
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get swapchain images!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+
+		// 为每个交换链图像创建一个对应的图像视图
+		// VkImageView 定义了图像的使用方式
+		swapchainImageViews.resize(swapchainImageCount);
+		VkImageViewCreateInfo imageViewCreateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = swapchainCreateInfo.imageFormat,
+			//.components = {}, //四个成员皆为VK_COMPONENT_SWIZZLE_IDENTITY
+			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }
+		};
+		// 遍历每一个交换链图像
+		for (size_t i = 0; i < swapchainImageCount; i++)
+		{
+			imageViewCreateInfo.image = swapchainImages[i];
+			if (VkResult result = vkCreateImageView(device, &imageViewCreateInfo, nullptr, &swapchainImageViews[i]))
+			{
+				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a swapchain image view!\nError code: {}\n", string_VkResult(result));
+				return result;
+			}
+		}
+		return VK_SUCCESS;
 	}
 
 public :
@@ -651,25 +696,254 @@ public :
 		return swapchainCreateInfo;
 	}
 	
-	// 取得surface的可用格式到availableSurfaceFormats
+	// 取得 surface 的可用格式到 availableSurfaceFormats
 	VkResult GetSurfaceFormats()
 	{
-		/*待Ch1-4填充*/
+		// surface 可用的图像格式及色彩空间的数量
+		uint32_t surfaceFormatCount;
+		if (VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, nullptr))
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of surface formats!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		// 如果没有可用的表面格式，说明当前环境不支持 Vulkan 的交换链功能，输出错误信息并终止程序
+		if (!surfaceFormatCount)
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to find any supported surface format!\n"),
+			abort();
+		}
+		// 为 availableSurfaceFormats 分配足够的空间以容纳所有可用的表面格式组合，并将它们返回到 availableSurfaceFormats
+		availableSurfaceFormats.resize(surfaceFormatCount);
+		VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, availableSurfaceFormats.data());
+		if (result)
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get surface formats!\nError code: {}\n", string_VkResult(result));
+		return result;
 	}
 	// 验证并指定图像格式和色彩空间
 	VkResult SetSurfaceFormat(VkSurfaceFormatKHR surfaceFormat)
 	{
-		/*待Ch1-4填充*/
+		// VkSurfaceFormatKHR 的成员：
+		// format				|			图像的像素颜色格式
+		// colorSpace			|			图像的色彩空间
+		bool formatIsAvailable = false;
+		// 如果格式未指定，只匹配色彩空间，图像格式有啥就用啥
+		if (!surfaceFormat.format)
+		{
+			// 遍历 availableSurfaceFormats 中的每一个表面格式组合，检查它们的 colorSpace 是否与 surfaceFormat.colorSpace 匹配
+			for (auto& i : availableSurfaceFormats)
+			{
+				// 如果找到一个匹配的色彩空间，
+				// 就将这个组合的 format 和 colorSpace 分别赋值给 swapchainCreateInfo.imageFormat 和 swapchainCreateInfo.imageColorSpace，
+				// 并将 formatIsAvailable 置为 true，跳出循环
+				if (i.colorSpace == surfaceFormat.colorSpace)
+				{
+					swapchainCreateInfo.imageFormat = i.format;
+					swapchainCreateInfo.imageColorSpace = i.colorSpace;
+					formatIsAvailable = true;
+					break;
+				}
+			}
+		}
+		// 否则匹配格式和色彩空间
+		else
+		{
+			for (auto& i : availableSurfaceFormats)
+			{
+				// 如果找到一个同时匹配的格式和色彩空间，
+				if (i.format == surfaceFormat.format &&
+					i.colorSpace == surfaceFormat.colorSpace)
+				{
+					swapchainCreateInfo.imageFormat = i.format;
+					swapchainCreateInfo.imageColorSpace = i.colorSpace;
+					formatIsAvailable = true;
+					break;
+				}
+			}
+		}
+
+		// 如果没有符合的格式，恰好有个语义相符的错误代码
+		if (!formatIsAvailable)
+			return VK_ERROR_FORMAT_NOT_SUPPORTED;
+		// 如果交换链已存在，调用RecreateSwapchain()重建交换链
+		if (swapchain)
+			return RecreateSwapchain();
+		return VK_SUCCESS;
 	}
-	//该函数用于创建交换链
+	// 该函数用于创建交换链
 	VkResult CreateSwapchain(bool limitFrameRate = true, VkSwapchainCreateFlagsKHR flags = 0)
 	{
-		/*待Ch1-4填充*/
+		// 填充创建交换链所需的信息
+		// 与 VkSurfaceCapabilitiesKHR 相关的参数有：交换链图像的数量、尺寸、视点数、变换、处理透明通道的方式、图像的用途
+		VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
+		if (VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCapabilities))
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get physical device surface capabilities!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		// 交换链图像的数量，必须至少为 surfaceCapabilities.minImageCount，并且不能超过 surfaceCapabilities.maxImageCount（如果 maxImageCount 不为0）
+		// 一般设置为 surfaceCapabilities.minImageCount + 1，这样可以在渲染时有更多的图像可用，从而提高帧率，但也会占用更多的内存
+		swapchainCreateInfo.minImageCount = surfaceCapabilities.minImageCount + (surfaceCapabilities.maxImageCount > surfaceCapabilities.minImageCount);
+		// 图像的尺寸，必须在 surfaceCapabilities.minImageExtent 和 surfaceCapabilities.maxImageExtent 之间
+		swapchainCreateInfo.imageExtent =
+			surfaceCapabilities.currentExtent.width == -1 
+			? VkExtent2D
+			  {
+				 glm::clamp(defaultWindowSize.width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width),
+				 glm::clamp(defaultWindowSize.height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height)
+			  } 
+			: surfaceCapabilities.currentExtent;
+		// imageArrayLayers：对于多视点（multiview）或立体显示设备，需要提供一个视点数
+		// 对于普通的2D显示设备，该值为1
+		swapchainCreateInfo.imageArrayLayers = 1;
+		// preTransform：对交换链图像的变换，比如旋转90°、镜像等
+		swapchainCreateInfo.preTransform = surfaceCapabilities.currentTransform;
+		// 设置交换链处理透明通道的方式，优先使用 VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR（如果支持），否则使用 VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+		// 可选参数：
+		//	vk_composite_alpha_opaque_bit_khr：         表示不透明，每个像素的a通道值皆被视作1.f
+
+		//	vk_composite_alpha_pre_multiplied_bit_khr： 表示将颜色值视作预乘透明度（premultiplied alpha）形式
+
+		//	vk_composite_alpha_post_multiplied_bit_khr：表示将颜色值视作后乘透明度形式，或称直接透明度（straight alpha）形式
+
+		//	vk_composite_alpha_inherit_bit_khr：		    表示透明度的处理方式由应用程序的其他部分（vulkan以外的部分）指定
+		if (surfaceCapabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR)
+			swapchainCreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+		else
+		{
+			for (size_t i = 0; i < 4; i++)
+			{
+				// 按优先级（不透明 -> 预乘 -> 后乘 -> 继承）自动挑出一个当前显卡支持的、最稳妥的 Alpha 混合模式，用来初始化 Vulkan 交换链
+				if (surfaceCapabilities.supportedCompositeAlpha & 1 << i)
+				{
+					// 一旦找到一个支持的模式，就直接设置到 swapchainCreateInfo.compositeAlpha 中，并跳出循环
+					swapchainCreateInfo.compositeAlpha = VkCompositeAlphaFlagBitsKHR(surfaceCapabilities.supportedCompositeAlpha & 1 << i);
+					break;
+				}
+			}
+
+		}
+		// 设置图像的用途，至少要包含 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT（表示图像将被用作渲染目标），还可以根据需要添加其他用途（比如 VK_IMAGE_USAGE_TRANSFER_SRC_BIT 表示图像将被用作数据传输的源）
+		swapchainCreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		// 根据 surfaceCapabilities.supportedUsageFlags 的值，自动添加交换链图像的用途标志，以便在后续的渲染过程中能够使用这些用途
+		// |= 是按位或赋值运算符，用于将新的用途标志追加到 swapchainCreateInfo.imageUsage 中，而不会覆盖之前已经设置的用途
+		if (surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+			swapchainCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;                // VK_IMAGE_USAGE_TRANSFER_SRC_BIT 表示图像将被用作数据传输的源
+		if (surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+			swapchainCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;                // VK_IMAGE_USAGE_TRANSFER_DST_BIT 表示图像将被用作数据传输的目的地
+		else
+			std::cout << std::format("[ graphicsBase ] WARNING\nVK_IMAGE_USAGE_TRANSFER_DST_BIT isn't supported!\n");
+
+		// 获取 surface 格式
+		if (availableSurfaceFormats.empty())
+		{
+			if (VkResult result = GetSurfaceFormats())
+				return result;
+		}
+
+		// 如果 swapchainCreateInfo.imageFormat 还没有被指定（即没有调用 SetSurfaceFormat(...) 来设置过）
+		// 就自动选择一个合适的图像格式和色彩空间的组合来初始化交换链
+		if (!swapchainCreateInfo.imageFormat)
+		{
+			// 用 && 操作符来短路执行
+			if (SetSurfaceFormat({ VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR }) &&
+				SetSurfaceFormat({ VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR }))
+			{
+				// 如果找不到上述图像格式和色彩空间的组合，那只能有什么用什么，采用availableSurfaceFormats中的第一组
+				swapchainCreateInfo.imageFormat = availableSurfaceFormats[0].format;
+				swapchainCreateInfo.imageColorSpace = availableSurfaceFormats[0].colorSpace;
+				std::cout << std::format("[ graphicsBase ] WARNING\nFailed to select a four-component UNORM surface format!\n");
+			}
+		}
+
+		// 指定呈现模式
+		
+		// VK_PRESENT_MODE_IMMEDIATE_KHR 表示立即模式，该模式下不限制帧率且帧率在所有模式中是最高的。该模式不等待垂直同步信号，一旦图片渲染完，用于呈现的图像就会被立刻替换掉，这可能导致画面撕裂
+
+		// VK_PRESENT_MODE_FIFO_KHR 表示先入先出模式，该模式限制帧率与屏幕刷新率一致，这种模式是必定支持的。在该模式下，图像被推送进一个用于待呈现图像的队列，然后等待垂直同步信号，按顺序被推出队列并输出到屏幕，因此叫先入先出
+
+		// VK_PRESENT_MODE_FIFO_RELAXED_KHR 同 VK_PRESENT_MODE_FIFO_KHR 的差别在于，若屏幕上图像的停留时间长于一个刷新间隔，呈现引擎可能在下一个垂直同步信号到来前便试图将呈现队列中的图像输出到屏幕，该模式相比 VK_PRESENT_MODE_FIFO_KHR 更不容易引起阻塞或迟滞，但在帧率较低时可能会导致画面撕裂
+
+		// VK_PRESENT_MODE_MAILBOX_KHR 是一种类似于三重缓冲的模式。它的待呈现图像队列中只容纳一个元素，在等待垂直同步信号期间若有新的图像入队，那么旧的图像会直接出队而不被输出到屏幕（即出队不需要等待垂直同步信号，因此不限制帧率），出现在屏幕上的总会是最新的图像
+		uint32_t surfacePresentModeCount;
+		if (VkResult result = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &surfacePresentModeCount, nullptr))
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of surface present modes!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		if (!surfacePresentModeCount)
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to find any surface present mode!\n");
+			abort();
+		}
+		std::vector<VkPresentModeKHR> surfacePresentModes(surfacePresentModeCount);
+		if (VkResult result = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &surfacePresentModeCount, surfacePresentModes.data()))
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get surface present modes!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		swapchainCreateInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+		// 在不需要限制帧率时应当选择 VK_PRESENT_MODE_MAILBOX_KHR
+		if (!limitFrameRate)
+		{
+			for (size_t i = 0; i < surfacePresentModeCount; i++)
+			{
+				if (surfacePresentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
+				{
+					swapchainCreateInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+					break;
+				}
+			}
+		}
+		// 填充 swapchainCreateInfo 中其他必要的成员
+		swapchainCreateInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+		swapchainCreateInfo.flags = flags;
+		swapchainCreateInfo.surface = surface;
+		swapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		swapchainCreateInfo.clipped = VK_TRUE;
+
+		if (VkResult result = CreateSwapchain_Internal())
+			return result;
+		/*待后续填充*/
 	}
-	//该函数用于重建交换链
+	// 该函数用于重建交换链
 	VkResult RecreateSwapchain()
 	{
-		/*待Ch1-4填充*/
+		// 创立窗口大小改变时的情况
+		VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
+		if (VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCapabilities))
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get physical device surface capabilities!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		if (surfaceCapabilities.currentExtent.width == 0 ||
+			surfaceCapabilities.currentExtent.height == 0)
+			return VK_SUBOPTIMAL_KHR;
+		swapchainCreateInfo.imageExtent = surfaceCapabilities.currentExtent;
+		// 把旧交换链的 handle 传给 swapchainCreateInfo.oldSwapchain
+		// 从而实现资源复用，提高重建交换链的效率
+		swapchainCreateInfo.oldSwapchain = swapchain;
+
+		VkResult result = vkQueueWaitIdle(queue_graphics);
+		// 确保程序没有在使用旧交换链的资源
+		// 仅在等待图形队列成功，且图形与呈现所用队列不同时等待呈现队列
+		if (!result && queue_graphics != queue_presentation)
+			result = vkQueueWaitIdle(queue_presentation);
+		if (result)
+		{
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to wait for the queue to be idle!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		for (auto& i : swapchainImageViews)
+		{
+			// 使用 vkDestroyImageView(...) 销毁旧交换链图像视图
+			if (i) vkDestroyImageView(device, i, nullptr);
+		}
+		swapchainImageViews.clear();
+		// 调用 CreateSwapchain_Internal(...) 来重建旧交换链
+		if (result = CreateSwapchain_Internal())
+			return result;
+		/*待后续填充*/
+		return VK_SUCCESS;
 	}
 
 	// -----使用 Vulkan 的最新版本-----
@@ -693,8 +967,6 @@ public:
 			return vkEnumerateInstanceVersion(&apiVersion);
 		}
 		return VK_SUCCESS;   //如果vkEnumerateInstanceVersion(...)不存在，说明当前环境只支持Vulkan 1.0，直接返回成功
-
-		/*待Ch1-3填充*/
 	}
 };
 
