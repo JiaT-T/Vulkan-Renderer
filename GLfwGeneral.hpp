@@ -48,16 +48,14 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	// 创建窗口
 	// 第四个参数用于指定全屏模式的显示器，若为nullptr则使用窗口模式
 	// 第五个参数可传入一个其他窗口的指针，用于与其他窗口分享内容
-	pWindow = glfwCreateWindow(size.width, size.height, windowTitle, nullptr, nullptr);
-
 	// 拿到当前显示器的指针（用于后续的全屏设置）
 	pMonitor = glfwGetPrimaryMonitor();
 	// 拿到当前显示器的显示模式（用于确保图像分辨率与窗口分辨率一致）
 	// 因为视频模式可能因用户设置而改变，所以在每次切换全屏模式时都要重新获取视频模式，而非使用全局变量存储
 	const GLFWvidmode* pMode = glfwGetVideoMode(pMonitor);
 	// 根据全屏设置调整窗口
-	pWindow = fullScreen 
-		? glfwCreateWindow(pMode->width, pMode->height, windowTitle, nullptr, nullptr)
+	pWindow = fullScreen && pMode
+		? glfwCreateWindow(pMode->width, pMode->height, windowTitle, pMonitor, nullptr)
 		: glfwCreateWindow(size.width, size.height, windowTitle, nullptr, nullptr);
 	// 验证窗口是否创建成功
 	if (!pWindow)
@@ -109,17 +107,21 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	// 通过用 || 操作符短路执行来省去几行
 	if (// 获取物理设备，并使用列表中的第一个物理设备，这里不考虑以下任意函数失败后更换物理设备的情况
 		vulkan::graphicsBase::Base().GetPhysicalDevices() ||
-		// 一个true一个false，暂时不需要计算用的队列
+		// 一个 true 一个 false，暂时不需要计算用的队列
 		vulkan::graphicsBase::Base().DeterminePhysicalDevice(0, true, false) ||
 		// 创建逻辑设备
 		vulkan::graphicsBase::Base().CreateDevice())
+		return false;
+
+	// 创建交换链，limitFrameRate 参数用于指定是否启用垂直同步
+	if (vulkan::graphicsBase::Base().CreateSwapchain(limitFrameRate))
 		return false;
 
 	return true;
 }
 void TerminateWindow()
 {
-	glfwDestroyWindow(pWindow);
+	vulkan::graphicsBase::Base().WaitIdle();
 	glfwTerminate();
 }
 

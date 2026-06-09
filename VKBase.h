@@ -574,7 +574,8 @@ public :
 		vkGetPhysicalDeviceMemoryProperties(physicalDevice, &physicalDeviceMemoryProperties);
 		//输出所用的物理设备名称
 		std::cout << std::format("Renderer: {}\n", physicalDeviceProperties.deviceName);
-		/*待Ch1-4填充*/
+		// 调用回调函数
+		ExecuteCallbacks(callbacks_createDevice);
 		return VK_SUCCESS;
 	}
 	// 以下函数用于创建逻辑设备失败后
@@ -585,6 +586,29 @@ public :
 	void DeviceExtensions(const std::vector<const char*>& extensionNames)
 	{
 		deviceExtensions = extensionNames;
+	}
+	// 等待设备空闲
+	VkResult WaitIdle() const
+	{
+		VkResult result = vkDeviceWaitIdle(device);
+		if (result)
+			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to wait for the device to be idle!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+
+// ----- 设备相关的回调函数列表 -----
+private:
+	std::vector<void(*)()> callbacks_createDevice;
+	std::vector<void(*)()> callbacks_destroyDevice;
+
+public:
+	void AddCallback_CreateDevice(void(*function)())
+	{
+		callbacks_createDevice.push_back(function);
+	}
+	void AddCallback_DestroyDevice(void(*function)())
+	{
+		callbacks_destroyDevice.push_back(function);
 	}
 
 // -----交换链（Swap Chain）相关-----
@@ -903,7 +927,9 @@ public :
 
 		if (VkResult result = CreateSwapchain_Internal())
 			return result;
-		/*待后续填充*/
+		// 调用回调函数
+		ExecuteCallbacks(callbacks_createSwapchain);
+		return VK_SUCCESS;
 	}
 	// 该函数用于重建交换链
 	VkResult RecreateSwapchain()
@@ -933,6 +959,9 @@ public :
 			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to wait for the queue to be idle!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
+		// 销毁旧交换链相关对象
+		ExecuteCallbacks(callbacks_destroySwapchain);
+
 		for (auto& i : swapchainImageViews)
 		{
 			// 使用 vkDestroyImageView(...) 销毁旧交换链图像视图
@@ -942,11 +971,36 @@ public :
 		// 调用 CreateSwapchain_Internal(...) 来重建旧交换链
 		if (result = CreateSwapchain_Internal())
 			return result;
-		/*待后续填充*/
+		// 调用回调函数
+		ExecuteCallbacks(callbacks_createSwapchain);
 		return VK_SUCCESS;
 	}
 
-	// -----使用 Vulkan 的最新版本-----
+// ----- 交换链相关的回调函数列表 -----
+private:
+	std::vector<void(*)()> callbacks_createSwapchain;
+	std::vector<void(*)()> callbacks_destroySwapchain;
+
+	// 用于执行回调函数列表中的所有函数
+	static void ExecuteCallbacks(std::vector<void(*)()> callbacks)
+	{
+		for (size_t size = callbacks.size(), i = 0; i < size; i++)
+		{
+			callbacks[i]();
+		}
+	}
+
+public:
+	void AddCallback_CreateSwapchain(void(*function)())
+	{
+		callbacks_createSwapchain.push_back(function);
+	}
+	void AddCallback_DestroySwapchain(void(*function)())
+	{
+		callbacks_destroySwapchain.push_back(function);
+	}
+
+// -----使用 Vulkan 的最新版本-----
 private:
 	uint32_t apiVersion = VK_API_VERSION_1_0;
 
