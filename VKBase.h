@@ -1,5 +1,6 @@
 #pragma once
 #include "VKStart.h"
+#include "helper.h"
 
 namespace vulkan
 {
@@ -68,12 +69,13 @@ public :
 		AddLayerOrExtension(instanceExtensions, extensionName);
 	}
 	//该函数用于创建Vulkan实例
-	VkResult CreateInstance(VkInstanceCreateFlags flags = 0)
+	result_t CreateInstance(VkInstanceCreateFlags flags = 0)
 	{
-#ifndef NDEBUG
-		AddInstanceLayer("VK_LAYER_KHRONOS_validation");
-		AddInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-#endif
+		if constexpr (ENABLE_DEBUG_MESSENGER)
+		{
+			AddInstanceLayer("VK_LAYER_KHRONOS_validation"),
+			AddInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+		}
 		// 填充信息结构体并创建 Vulkan 实例
 		VkApplicationInfo appInfo =
 		{
@@ -98,23 +100,22 @@ public :
 		// 当 Vukan 实例创建失败时，vkCreateInstance(...)会返回一个错误码，可以根据这个错误码来判断失败的原因
 		if (VkResult result = vkCreateInstance(&createInfo, nullptr, &instance); result != VK_SUCCESS)
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a vulkan instance!\nError code: {}\n", int32_t(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to create a vulkan instance!\nError code: {}\n", int32_t(result));
 			return result;
 		}
 		//成功创建 Vulkan 实例后，输出Vulkan版本
-		std::cout << std::format(
+		outStream << std::format(
 			"Vulkan API Version: {}.{}.{}\n",
 			VK_API_VERSION_MAJOR(apiVersion),
 			VK_API_VERSION_MINOR(apiVersion),
 			VK_API_VERSION_PATCH(apiVersion));
 		// 如果启用了验证层和调试工具扩展，创建 Debug Messenger
-#ifndef NDEBUG
-		CreateDebugMessenger();
-#endif
+		if constexpr (ENABLE_DEBUG_MESSENGER)
+			CreateDebugMessenger();
 		return VK_SUCCESS;
 	}
 	//以下函数用于创建Vulkan实例失败后
-	VkResult CheckInstanceLayers(std::span<const char*> layersToCheck)
+	result_t CheckInstanceLayers(std::span<const char*> layersToCheck)
 	{
 		// 获取可用层的总数
 		uint32_t layerCount = 0;
@@ -125,7 +126,7 @@ public :
 		// VkLayerProperties* pProperties		|			若pProperties非nullptr，则将*pPropertyCount个可用层的VkLayerProperties返回到*pProperties
 		if (VkResult result = vkEnumerateInstanceLayerProperties(&layerCount, nullptr); result != VK_SUCCESS)
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of instance layers!\n");
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get the count of instance layers!\n");
 			return result;
 		}
 
@@ -135,7 +136,7 @@ public :
 			availableLayers.resize(layerCount);
 			if (VkResult result = vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data()))
 			{
-				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to enumerate instance layer properties!\nError code: {}\n", string_VkResult(result));
+				outStream << std::format("[ graphicsBase ] ERROR\nFailed to enumerate instance layer properties!\nError code: {}\n", string_VkResult(result));
 				return result;
 			}
 
@@ -173,15 +174,15 @@ public :
 		instanceLayers = layerNames;
 	}
 	// 写法与 CheckInstanceLayers（）基本一样
-	VkResult CheckInstanceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const 
+	result_t CheckInstanceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const 
 	{
 		uint32_t extensionCount;
 		std::vector<VkExtensionProperties> availableExtensions;
 		if (VkResult result = vkEnumerateInstanceExtensionProperties(layerName, &extensionCount, nullptr))
 		{
 			layerName ?
-				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of instance extensions!\nLayer name: {}\n", layerName) :
-				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of instance extensions!\n");
+				outStream << std::format("[ graphicsBase ] ERROR\nFailed to get the count of instance extensions!\nLayer name: {}\n", layerName) :
+				outStream << std::format("[ graphicsBase ] ERROR\nFailed to get the count of instance extensions!\n");
 			return result;
 		}
 		if (extensionCount)
@@ -189,7 +190,7 @@ public :
 			availableExtensions.resize(extensionCount);
 			if (VkResult result = vkEnumerateInstanceExtensionProperties(layerName, &extensionCount, availableExtensions.data()))
 			{
-				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to enumerate instance extension properties!\nError code: {}\n", string_VkResult(result));
+				outStream << std::format("[ graphicsBase ] ERROR\nFailed to enumerate instance extension properties!\nError code: {}\n", string_VkResult(result));
 				return result;
 			}
 			for (auto& i : extensionsToCheck)
@@ -224,7 +225,7 @@ public :
 // -----Debug 相关-----
 private :
 	VkDebugUtilsMessengerEXT debugMessenger;
-	VkResult CreateDebugMessenger()
+	result_t CreateDebugMessenger()
 	{
 		// 返回值为 VkBool32 的回调函数
 		// 当 Vulkan 代码触发了验证层（Validation Layers）的警告或错误时，这个函数就会被隐式回调
@@ -237,7 +238,7 @@ private :
 			{
 				// 在控制台输出验证层的警告或错误信息，pMessage成员包含了具体的消息内容
 				// 如：重要程度、消息类型、触发消息的 Vulkan API 调用等
-				std::cout << std::format("{}\n\n", pCallbackData->pMessage);
+				outStream << std::format("{}\n\n", pCallbackData->pMessage);
 				return VK_FALSE;
 			};
 
@@ -269,11 +270,11 @@ private :
 			VkResult result = vkCreateDebugUtilsMessenger(instance, &debugUtilsMessengerCreateInfo, nullptr, &debugMessenger);
 			if (result != VK_SUCCESS)
 			{
-				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a debug messenger!\nError code: {}\n", string_VkResult(result));
+				outStream << std::format("[ graphicsBase ] ERROR\nFailed to create a debug messenger!\nError code: {}\n", string_VkResult(result));
 			}
 			return result;
 		}
-		std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the function pointer of vkCreateDebugUtilsMessengerEXT!\n");
+		outStream << std::format("[ graphicsBase ] ERROR\nFailed to get the function pointer of vkCreateDebugUtilsMessengerEXT!\n");
 		// VK_RESULT_MAX_ENUM 的值为 INT32_MAX
 		// 这个值不会与任何实际的 VkResult 错误码以及 Vulkan 函数的返回值冲突
 		return VK_RESULT_MAX_ENUM;
@@ -322,7 +323,7 @@ private :
 	std::vector<const char*> deviceExtensions;
 
 	//该函数被 DeterminePhysicalDevice(...)调用，用于检查物理设备是否满足所需的队列族类型，并将对应的队列族索引返回到queueFamilyIndices，执行成功时直接将索引写入相应成员变量
-	VkResult GetQueueFamilyIndices(VkPhysicalDevice physicalDevice, bool enableGraphicsQueue, bool enableComputeQueue)
+	result_t GetQueueFamilyIndices(VkPhysicalDevice physicalDevice, bool enableGraphicsQueue, bool enableComputeQueue)
 	{
 		// 用 vkGetPhysicalDeviceQueueFamilyProperties(...)取得物理设备所具有的队列族的列表
 		// void vkGetPhysicalDeviceQueueFamilyProperties(...) 的参数:
@@ -352,7 +353,7 @@ private :
 			{
 				if (VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &supportPresentation))
 				{
-					std::cout << std::format("[ graphicsBase ] ERROR\nFailed to determine if the queue family supports presentation!\nError code: {}\n", string_VkResult(result));
+					outStream << std::format("[ graphicsBase ] ERROR\nFailed to determine if the queue family supports presentation!\nError code: {}\n", string_VkResult(result));
 					return result;
 				}
 			}
@@ -433,7 +434,7 @@ public :
 		AddLayerOrExtension(deviceExtensions, extensionName);
 	}
 	// 用于获取物理设备
-	VkResult GetPhysicalDevices()
+	result_t GetPhysicalDevices()
 	{
 		// 物理设备的数量
 		uint32_t deviceCount;
@@ -442,24 +443,24 @@ public :
 		// uint32_t* pPhysicalDeviceCount			|			若 pPhysicalDevices 为 nullptr，则将可用物理设备的数量返回到 *pPhysicalDeviceCount，否则由 *pPhysicalDeviceCount 指定所需获取的 VkPhysicalDevice 的数量
 		// VkPhysicalDevice* pPhysicalDevices		|			若 pPhysicalDevices 非 nullptr，则将 *pPhysicalDeviceCount 个可用物理设备的 VkPhysicalDevice 返回到 *pPhysicalDevices
 		if (VkResult result = vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr)) {
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of physical devices!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get the count of physical devices!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		// 如果可用物理设备的数量为0，说明当前环境不支持 Vulkan，输出错误信息并终止程序
 		if (!deviceCount)
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to find any physical device supports vulkan!\n"),
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to find any physical device supports vulkan!\n"),
 			// abort(): C++标准库中的一个函数，用于立即终止程序的执行
 			abort();
 		// 调整 availablePhysicalDevices 的大小以容纳所有可用物理设备，并将它们返回到 availablePhysicalDevices
 		availablePhysicalDevices.resize(deviceCount);
 		VkResult result = vkEnumeratePhysicalDevices(instance, &deviceCount, availablePhysicalDevices.data());
 		if (result)
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to enumerate physical devices!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to enumerate physical devices!\nError code: {}\n", string_VkResult(result));
 		return result;
 	}
 	// 该函数用于指定所用物理设备并调用GetQueueFamilyIndices(...)取得队列族索引
 	// 更明确的说法是：为每个物理设备保存一份所需队列族索引的组合
-	VkResult DeterminePhysicalDevice(uint32_t deviceIndex = 0, bool enableGraphicsQueue = true, bool enableComputeQueue = true)
+	result_t DeterminePhysicalDevice(uint32_t deviceIndex = 0, bool enableGraphicsQueue = true, bool enableComputeQueue = true)
 	{
 		// 定义一个特殊值用于标记一个队列族索引已被找过但未找到
 		static constexpr uint32_t notFound = INT32_MAX; // == VK_QUEUE_FAMILY_IGNORED & INT32_MAX
@@ -502,7 +503,7 @@ public :
 		return VK_SUCCESS;
 	}
 	// 该函数用于创建逻辑设备，并取得队列
-	VkResult CreateDevice(VkDeviceCreateFlags flags = 0)
+	result_t CreateDevice(VkDeviceCreateFlags flags = 0)
 	{
 		// 队列优先级，范围是0.0到1.0，数值越大优先级越高
 		float queuePriority = 1.f;
@@ -557,7 +558,7 @@ public :
 		// 调用 vkCreateDevice(...) 来创建逻辑设备
 		if (VkResult result = vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a vulkan logical device!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to create a vulkan logical device!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		// 调用 vkGetDeviceQueue(...) 来获取之前指定的图形、呈现和计算队列的句柄
@@ -573,13 +574,13 @@ public :
 		// 获取物理设备内存属性
 		vkGetPhysicalDeviceMemoryProperties(physicalDevice, &physicalDeviceMemoryProperties);
 		//输出所用的物理设备名称
-		std::cout << std::format("Renderer: {}\n", physicalDeviceProperties.deviceName);
+		outStream << std::format("Renderer: {}\n", physicalDeviceProperties.deviceName);
 		// 调用回调函数
 		ExecuteCallbacks(callbacks_createDevice);
 		return VK_SUCCESS;
 	}
 	// 以下函数用于创建逻辑设备失败后
-	VkResult CheckDeviceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const
+	result_t CheckDeviceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const
 	{
 		/*待Ch1-3填充*/
 	}
@@ -588,11 +589,11 @@ public :
 		deviceExtensions = extensionNames;
 	}
 	// 等待设备空闲
-	VkResult WaitIdle() const
+	result_t WaitIdle() const
 	{
 		VkResult result = vkDeviceWaitIdle(device);
 		if (result)
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to wait for the device to be idle!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to wait for the device to be idle!\nError code: {}\n", string_VkResult(result));
 		return result;
 	}
 
@@ -634,12 +635,12 @@ private :
 	VkSwapchainCreateInfoKHR swapchainCreateInfo = {};
 
 	//该函数被CreateSwapchain(...)和RecreateSwapchain()调用
-	VkResult CreateSwapchain_Internal()
+	result_t CreateSwapchain_Internal()
 	{
 		// 创建交换链
 		if (VkResult result = vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a swapchain!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to create a swapchain!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 
@@ -647,13 +648,13 @@ private :
 		uint32_t swapchainImageCount;
 		if (VkResult result = vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, nullptr))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of swapchain images!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get the count of swapchain images!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		swapchainImages.resize(swapchainImageCount);
 		if (VkResult result = vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get swapchain images!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get swapchain images!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 
@@ -674,7 +675,7 @@ private :
 			imageViewCreateInfo.image = swapchainImages[i];
 			if (VkResult result = vkCreateImageView(device, &imageViewCreateInfo, nullptr, &swapchainImageViews[i]))
 			{
-				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a swapchain image view!\nError code: {}\n", string_VkResult(result));
+				outStream << std::format("[ graphicsBase ] ERROR\nFailed to create a swapchain image view!\nError code: {}\n", string_VkResult(result));
 				return result;
 			}
 		}
@@ -721,30 +722,30 @@ public :
 	}
 	
 	// 取得 surface 的可用格式到 availableSurfaceFormats
-	VkResult GetSurfaceFormats()
+	result_t GetSurfaceFormats()
 	{
 		// surface 可用的图像格式及色彩空间的数量
 		uint32_t surfaceFormatCount;
 		if (VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, nullptr))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of surface formats!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get the count of surface formats!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		// 如果没有可用的表面格式，说明当前环境不支持 Vulkan 的交换链功能，输出错误信息并终止程序
 		if (!surfaceFormatCount)
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to find any supported surface format!\n"),
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to find any supported surface format!\n"),
 			abort();
 		}
 		// 为 availableSurfaceFormats 分配足够的空间以容纳所有可用的表面格式组合，并将它们返回到 availableSurfaceFormats
 		availableSurfaceFormats.resize(surfaceFormatCount);
 		VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, availableSurfaceFormats.data());
 		if (result)
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get surface formats!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get surface formats!\nError code: {}\n", string_VkResult(result));
 		return result;
 	}
 	// 验证并指定图像格式和色彩空间
-	VkResult SetSurfaceFormat(VkSurfaceFormatKHR surfaceFormat)
+	result_t SetSurfaceFormat(VkSurfaceFormatKHR surfaceFormat)
 	{
 		// VkSurfaceFormatKHR 的成员：
 		// format				|			图像的像素颜色格式
@@ -794,14 +795,14 @@ public :
 		return VK_SUCCESS;
 	}
 	// 该函数用于创建交换链
-	VkResult CreateSwapchain(bool limitFrameRate = true, VkSwapchainCreateFlagsKHR flags = 0)
+	result_t CreateSwapchain(bool limitFrameRate = true, VkSwapchainCreateFlagsKHR flags = 0)
 	{
 		// 填充创建交换链所需的信息
 		// 与 VkSurfaceCapabilitiesKHR 相关的参数有：交换链图像的数量、尺寸、视点数、变换、处理透明通道的方式、图像的用途
 		VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
 		if (VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCapabilities))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get physical device surface capabilities!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get physical device surface capabilities!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		// 交换链图像的数量，必须至少为 surfaceCapabilities.minImageCount，并且不能超过 surfaceCapabilities.maxImageCount（如果 maxImageCount 不为0）
@@ -855,7 +856,7 @@ public :
 		if (surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
 			swapchainCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;                // VK_IMAGE_USAGE_TRANSFER_DST_BIT 表示图像将被用作数据传输的目的地
 		else
-			std::cout << std::format("[ graphicsBase ] WARNING\nVK_IMAGE_USAGE_TRANSFER_DST_BIT isn't supported!\n");
+			outStream << std::format("[ graphicsBase ] WARNING\nVK_IMAGE_USAGE_TRANSFER_DST_BIT isn't supported!\n");
 
 		// 获取 surface 格式
 		if (availableSurfaceFormats.empty())
@@ -875,7 +876,7 @@ public :
 				// 如果找不到上述图像格式和色彩空间的组合，那只能有什么用什么，采用availableSurfaceFormats中的第一组
 				swapchainCreateInfo.imageFormat = availableSurfaceFormats[0].format;
 				swapchainCreateInfo.imageColorSpace = availableSurfaceFormats[0].colorSpace;
-				std::cout << std::format("[ graphicsBase ] WARNING\nFailed to select a four-component UNORM surface format!\n");
+				outStream << std::format("[ graphicsBase ] WARNING\nFailed to select a four-component UNORM surface format!\n");
 			}
 		}
 
@@ -891,18 +892,18 @@ public :
 		uint32_t surfacePresentModeCount;
 		if (VkResult result = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &surfacePresentModeCount, nullptr))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of surface present modes!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get the count of surface present modes!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		if (!surfacePresentModeCount)
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to find any surface present mode!\n");
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to find any surface present mode!\n");
 			abort();
 		}
 		std::vector<VkPresentModeKHR> surfacePresentModes(surfacePresentModeCount);
 		if (VkResult result = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &surfacePresentModeCount, surfacePresentModes.data()))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get surface present modes!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get surface present modes!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		swapchainCreateInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
@@ -932,13 +933,13 @@ public :
 		return VK_SUCCESS;
 	}
 	// 该函数用于重建交换链
-	VkResult RecreateSwapchain()
+	result_t RecreateSwapchain()
 	{
 		// 创立窗口大小改变时的情况
 		VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
 		if (VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCapabilities))
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get physical device surface capabilities!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to get physical device surface capabilities!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		if (surfaceCapabilities.currentExtent.width == 0 ||
@@ -956,7 +957,7 @@ public :
 			result = vkQueueWaitIdle(queue_presentation);
 		if (result)
 		{
-			std::cout << std::format("[ graphicsBase ] ERROR\nFailed to wait for the queue to be idle!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to wait for the queue to be idle!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 		// 销毁旧交换链相关对象
@@ -1010,7 +1011,7 @@ public:
 	{
 		return apiVersion;
 	}
-	VkResult UseLatestApiVersion() 
+	result_t UseLatestApiVersion()
 	{
 		// PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(...) 的参数说明：
 		// VkInstance instance：      |       Vulkan实例的handle，若要取得的函数指针不依赖Vulkan实例，可为VK_NULL_HANDLE

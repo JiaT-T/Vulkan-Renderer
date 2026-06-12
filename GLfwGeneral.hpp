@@ -15,7 +15,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	// 初始化 GLFW
 	if (!glfwInit())
 	{
-		std::cout << std::format("[ InitializeWindow ] ERROR\nFailed to initialize GLFW!\n");
+		outStream << std::format("[ InitializeWindow ] ERROR\nFailed to initialize GLFW!\n");
 		return false;
 	}
 	// 向GLFW说明这里不使用 OpenGL 上下文
@@ -32,7 +32,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	// 之后输出错误信息并清理 GLFW
 	if (!extensionNames)
 	{
-		std::cout << std::format("[ InitializeWindow ]\nVulkan is not available on this machine!\n");
+		outStream << std::format("[ InitializeWindow ]\nVulkan is not available on this machine!\n");
 		glfwTerminate();
 		return false;
 	}
@@ -60,7 +60,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	// 验证窗口是否创建成功
 	if (!pWindow)
 	{
-		std::cout << std::format("[ InitializeWindow ] ERROR\nFailed to create GLFW window!\n");
+		outStream << std::format("[ InitializeWindow ] ERROR\nFailed to create GLFW window!\n");
 		// 清理 GLFW 并返回 false
 		glfwTerminate();
 		return false;
@@ -77,7 +77,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	// 如果没有获取到任何扩展，说明此设备不支持 Vulkan
 	if (!extensionNames)
 	{
-		std::cout << std::format("[ InitializeWindow ]\nVulkan is not available on this machine!\n");
+		outStream << std::format("[ InitializeWindow ]\nVulkan is not available on this machine!\n");
 		glfwTerminate();
 		return false;
 	}
@@ -97,7 +97,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	VkSurfaceKHR surface = VK_NULL_HANDLE;
 	if (VkResult result = glfwCreateWindowSurface(vulkan::graphicsBase::Base().Instance(), pWindow, nullptr, &surface))
 	{
-		std::cout << std::format("[ InitializeWindow ] ERROR\nFailed to create a window surface!\nError code: {}\n", string_VkResult(result));
+		outStream << std::format("[ InitializeWindow ] ERROR\nFailed to create a window surface!\nError code: {}\n", string_VkResult(result));
 		glfwTerminate();
 		return false;
 	}
