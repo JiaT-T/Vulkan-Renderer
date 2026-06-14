@@ -1026,4 +1026,194 @@ public:
 };
 
 inline graphicsBase graphicsBase::singleton;
+
+
+class fence
+{
+private :
+	VkFence handle = VK_NULL_HANDLE;
+public :
+	fence(VkFenceCreateInfo& createInfo)
+	{
+		Create(createInfo);
+	}
+	fence(VkFenceCreateFlags createFlags = 0)
+	{
+		Create(createFlags);
+	}
+	fence(fence&& other) noexcept { MoveHandle; }
+	~fence() { DestroyHandleBy(vkDestroyFence); }
+	//Getter
+	DefineHandleTypeOperator;
+	DefineAddressFunction;
+	// Unsugnaled（未置位 / 未发出信号）：表示它关联的 GPU 任务还在排队或正在执行，CPU 如果在此时等待它，会被阻塞。
+	// Signaled（已置位 / 已发出信号）  ：表示关联的 GPU 任务已经安全结束，CPU 可以继续往下执行。
+	// 等待 fence 置位
+	result_t Wait() const
+	{
+		VkResult result = vkWaitForFences(graphicsBase::Base().Device(), 1, &handle, false, UINT64_MAX);
+		if (result)
+			outStream << std::format("[ fence ] ERROR\nFailed to wait for the fence!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	// 将 fence 重置为“未置位”状态
+	result_t Reset() const
+	{
+		VkResult result = vkResetFences(graphicsBase::Base().Device(), 1, &handle);
+		if (result)
+			outStream << std::format("[ fence ] ERROR\nFailed to reset the fence!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t WaitAndReset() const
+	{
+		VkResult result = Wait();
+		if (result == VK_SUCCESS)
+		{
+			result = Reset();
+		}
+		return result;
+	}
+	// 判断 fence 当前状态
+	result_t Status() const
+	{
+		VkResult result = vkGetFenceStatus(graphicsBase::Base().Device(), handle);
+		if (result < 0) //vkGetFenceStatus(...)成功时有两种结果，所以不能仅仅判断result是否非0
+			outStream << std::format("[ fence ] ERROR\nFailed to get the status of the fence!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t Create(VkFenceCreateInfo& createInfo)
+	{
+		createInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		VkResult result = vkCreateFence(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+		if (result)
+			outStream << std::format("[ fence ] ERROR\nFailed to create a fence!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t Create(VkFenceCreateFlags flags = 0)
+	{
+		VkFenceCreateInfo createInfo =
+		{
+			.flags = flags
+		};
+		return Create(createInfo);
+	}
+
+	class semaphore
+	{
+	private :
+		VkSemaphore handle = VK_NULL_HANDLE;
+
+	public :
+		semaphore(VkSemaphoreCreateInfo& createInfo)
+		{
+			Create(createInfo);
+		}
+		//默认构造器创建未置位的信号量
+		semaphore(/*VkSemaphoreCreateFlags flags*/)
+		{
+			Create();
+		}
+		semaphore(semaphore&& other) noexcept { MoveHandle; }
+		~semaphore() { DestroyHandleBy(vkDestroySemaphore); }
+		//Getter
+		DefineHandleTypeOperator;
+		DefineAddressFunction;
+		//Non-const Function
+		result_t Create(VkSemaphoreCreateInfo& createInfo)
+		{
+			createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+			VkResult result = vkCreateSemaphore(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+			if (result)
+				outStream << std::format("[ semaphore ] ERROR\nFailed to create a semaphore!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		result_t Create(/*VkSemaphoreCreateFlags flags*/)
+		{
+			VkSemaphoreCreateInfo createInfo = {};
+			return Create(createInfo);
+		}
+	};
+
+	class event
+	{
+	private :
+		VkEvent handle = VK_NULL_HANDLE;
+
+	public :
+		event(VkEventCreateInfo& createInfo)
+		{
+			Create(createInfo);
+		}
+		event(VkEventCreateFlags flags = 0)
+		{
+			Create(flags);
+		}
+		event(event&& other) noexcept { MoveHandle; }
+		~event() { DestroyHandleBy(vkDestroyEvent); }
+		//Getter
+		DefineHandleTypeOperator;
+		DefineAddressFunction;
+		void CmdSet(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from) const
+		{
+			vkCmdSetEvent(commandBuffer, handle, stage_from);
+		}
+		void CmdReset(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from) const
+		{
+			vkCmdResetEvent(commandBuffer, handle, stage_from);
+		}
+		void CmdWait(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from, VkPipelineStageFlags stage_to,
+			arrayRef<VkMemoryBarrier> memoryBarriers,
+			arrayRef<VkBufferMemoryBarrier> bufferMemoryBarriers,
+			arrayRef<VkImageMemoryBarrier> imageMemoryBarriers)
+		{
+			for (auto& i : memoryBarriers)
+				i.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+			for (auto& i : bufferMemoryBarriers)
+				i.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+			for (auto& i : imageMemoryBarriers)
+				i.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			vkCmdWaitEvents(commandBuffer, 1, &handle, stage_from, stage_to,
+				memoryBarriers.Count(), memoryBarriers.Pointer(),
+				bufferMemoryBarriers.Count(), bufferMemoryBarriers.Pointer(),
+				imageMemoryBarriers.Count(), imageMemoryBarriers.Pointer());
+		}
+		result_t Set() const
+		{
+			VkResult result = vkSetEvent(graphicsBase::Base().Device(), handle);
+			if (result)
+				outStream << std::format("[ event ] ERROR\nFailed to singal the event!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		result_t Reset() const
+		{
+			VkResult result = vkResetEvent(graphicsBase::Base().Device(), handle);
+			if (result)
+				outStream << std::format("[ event ] ERROR\nFailed to unsingal the event!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		result_t Status() const
+		{
+			VkResult result = vkGetEventStatus(graphicsBase::Base().Device(), handle);
+			if (result < 0) //vkGetEventStatus(...)成功时有两种结果
+				outStream << std::format("[ event ] ERROR\nFailed to get the status of the event!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		result_t Create(VkEventCreateInfo& createInfo)
+		{
+			createInfo.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
+			VkResult result = vkCreateEvent(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+			if (result)
+				outStream << std::format("[ event ] ERROR\nFailed to create an event!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+		result_t Create(VkEventCreateFlags flags = 0)
+		{
+			VkEventCreateInfo createInfo =
+			{
+				.flags = flags
+			};
+			return Create(createInfo);
+		}
+	};
+};
 }
