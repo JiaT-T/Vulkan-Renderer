@@ -626,6 +626,7 @@ private :
 	// 然后从中挑选出一个最适合渲染需求的组合（比如最常见的 8 - bit BGRA 格式配 sRGB 色彩空间）
 	std::vector< VkSurfaceFormatKHR> availableSurfaceFormats;
 
+	// VkSwapchainKHR: 管理一组可呈现到窗口表面的图像
 	VkSwapchainKHR swapchain;
 	// VkImage: Vulkan 中的图像对象，代表一块内存区域，可以用来存储纹理、渲染目标等数据
 	std::vector <VkImage> swapchainImages;
@@ -1001,7 +1002,7 @@ public:
 		callbacks_destroySwapchain.push_back(function);
 	}
 
-// -----使用 Vulkan 的最新版本-----
+// ----- 使用 Vulkan 的最新版本 -----
 private:
 	uint32_t apiVersion = VK_API_VERSION_1_0;
 
@@ -1023,6 +1024,123 @@ public:
 		}
 		return VK_SUCCESS;   //如果vkEnumerateInstanceVersion(...)不存在，说明当前环境只支持Vulkan 1.0，直接返回成功
 	}
+
+// ----- 交换链相关 -----
+private:
+	// 当前取得的交换链图像索引
+	uint32_t currentImageIndex = 0;
+
+public:
+	// Getter
+	uint32_t CurrentImageIndex() const { return currentImageIndex; }
+	// 该函数用于获取交换链图像索引到currentImageIndex，以及在需要重建交换链时调用RecreateSwapchain()、重建交换链后销毁旧交换链
+	result_t SwapImage(VkSemaphore semaphore_imageIsAvailable)
+	{
+		// 销毁旧交换链（若存在）
+		if (swapchainCreateInfo.oldSwapchain &&
+			swapchainCreateInfo.oldSwapchain != swapchain)
+		{
+			vkDestroySwapchainKHR(device, swapchainCreateInfo.oldSwapchain, nullptr);
+			swapchainCreateInfo.oldSwapchain = VK_NULL_HANDLE;
+		}
+		// 获取交换链图像索引
+		while (VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, semaphore_imageIsAvailable, VK_NULL_HANDLE, &currentImageIndex))
+		{
+			switch (result)
+			{
+				case VK_SUBOPTIMAL_KHR:
+				case VK_ERROR_OUT_OF_DATE_KHR:
+					if (VkResult result = RecreateSwapchain())
+						return result;
+					break; //注意重建交换链后仍需要获取图像，通过break递归，再次执行while的条件判定语句
+				default:
+					outStream << std::format("[ graphicsBase ] ERROR\nFailed to acquire the next image!\nError code: {}\n", string_VkResult(result));
+					return result;
+			}
+		}
+		return VK_SUCCESS;
+	}
+
+	// 该函数用于将已经填好的提交信息提交到图形队列
+	result_t SubmitCommandBuffer_Graphics(VkSubmitInfo& submitInfo, VkFence fence = VK_NULL_HANDLE) const
+	{
+		// VkSubmitInfo: 描述一次队列提交中要等待的信号量、要执行的命令缓冲区、以及执行完成后要置位的信号量
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		VkResult result = vkQueueSubmit(queue_graphics, 1, &submitInfo, fence);
+		if (result)
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to submit the command buffer!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	// 该函数用于渲染循环中最常见的图形队列提交：等待图像可用信号量，提交命令缓冲区，渲染结束后置位信号量和栅栏
+	result_t SubmitCommandBuffer_Graphics(VkCommandBuffer commandBuffer,
+		VkSemaphore semaphore_imageIsAvailable = VK_NULL_HANDLE,
+		VkSemaphore semaphore_renderingIsOver = VK_NULL_HANDLE,
+		VkFence fence = VK_NULL_HANDLE,
+		VkPipelineStageFlags waitDstStage_imageIsAvailable = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) const
+	{
+		// VkCommandBuffer: 本帧要提交给图形队列执行的命令缓冲区
+		VkSubmitInfo submitInfo =
+		{
+			.commandBufferCount = 1,
+			.pCommandBuffers = &commandBuffer
+		};
+		// VkSemaphore: 获取交换链图像后置位，图形队列在颜色输出阶段前等待它
+		if (semaphore_imageIsAvailable)
+			submitInfo.waitSemaphoreCount = 1,
+			submitInfo.pWaitSemaphores = &semaphore_imageIsAvailable,
+			submitInfo.pWaitDstStageMask = &waitDstStage_imageIsAvailable;
+		// VkSemaphore: 命令缓冲区执行完成后置位，呈现图像前等待它
+		if (semaphore_renderingIsOver)
+			submitInfo.signalSemaphoreCount = 1,
+			submitInfo.pSignalSemaphores = &semaphore_renderingIsOver;
+		// VkFence: 命令缓冲区执行完成后在 CPU 侧可等待的同步对象
+		return SubmitCommandBuffer_Graphics(submitInfo, fence);
+	}
+	// 该函数用于只使用栅栏提交命令缓冲区的简单情形
+	result_t SubmitCommandBuffer_Graphics(VkCommandBuffer commandBuffer, VkFence fence = VK_NULL_HANDLE) const
+	{
+		// VkSubmitInfo: 此处只包含一个命令缓冲区，不设置任何信号量
+		VkSubmitInfo submitInfo =
+		{
+			.commandBufferCount = 1,
+			.pCommandBuffers = &commandBuffer
+		};
+		return SubmitCommandBuffer_Graphics(submitInfo, fence);
+	}
+	// 该函数用于将当前交换链图像提交给呈现队列
+	result_t PresentImage(VkPresentInfoKHR& presentInfo)
+	{
+		// VkPresentInfoKHR: 描述要等待的信号量、要呈现的交换链、以及要呈现的交换链图像索引
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		switch (VkResult result = vkQueuePresentKHR(queue_presentation, &presentInfo))
+		{
+		case VK_SUCCESS:
+			return VK_SUCCESS;
+		case VK_SUBOPTIMAL_KHR:
+		case VK_ERROR_OUT_OF_DATE_KHR:
+			return RecreateSwapchain();
+		default:
+			outStream << std::format("[ graphicsBase ] ERROR\nFailed to queue the image for presentation!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+	}
+	// 该函数用于渲染循环中最常见的呈现：等待渲染结束信号量，再呈现当前交换链图像
+	result_t PresentImage(VkSemaphore semaphore_renderingIsOver = VK_NULL_HANDLE)
+	{
+		// VkSwapchainKHR: 本次要呈现图像所属的交换链
+		// currentImageIndex: SwapImage(...) 取得的当前交换链图像索引
+		VkPresentInfoKHR presentInfo =
+		{
+			.swapchainCount = 1,
+			.pSwapchains = &swapchain,
+			.pImageIndices = &currentImageIndex
+		};
+		// VkSemaphore: 等待图形队列完成渲染后再呈现
+		if (semaphore_renderingIsOver)
+			presentInfo.waitSemaphoreCount = 1,
+			presentInfo.pWaitSemaphores = &semaphore_renderingIsOver;
+		return PresentImage(presentInfo);
+	}
 };
 
 inline graphicsBase graphicsBase::singleton;
@@ -1031,6 +1149,7 @@ inline graphicsBase graphicsBase::singleton;
 class fence
 {
 private :
+	// VkFence: GPU 向 CPU 通知某次队列提交已经完成的同步对象
 	VkFence handle = VK_NULL_HANDLE;
 public :
 	fence(VkFenceCreateInfo& createInfo)
@@ -1097,123 +1216,221 @@ public :
 		};
 		return Create(createInfo);
 	}
-
-	class semaphore
-	{
-	private :
-		VkSemaphore handle = VK_NULL_HANDLE;
-
-	public :
-		semaphore(VkSemaphoreCreateInfo& createInfo)
-		{
-			Create(createInfo);
-		}
-		//默认构造器创建未置位的信号量
-		semaphore(/*VkSemaphoreCreateFlags flags*/)
-		{
-			Create();
-		}
-		semaphore(semaphore&& other) noexcept { MoveHandle; }
-		~semaphore() { DestroyHandleBy(vkDestroySemaphore); }
-		//Getter
-		DefineHandleTypeOperator;
-		DefineAddressFunction;
-		//Non-const Function
-		result_t Create(VkSemaphoreCreateInfo& createInfo)
-		{
-			createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-			VkResult result = vkCreateSemaphore(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
-			if (result)
-				outStream << std::format("[ semaphore ] ERROR\nFailed to create a semaphore!\nError code: {}\n", string_VkResult(result));
-			return result;
-		}
-		result_t Create(/*VkSemaphoreCreateFlags flags*/)
-		{
-			VkSemaphoreCreateInfo createInfo = {};
-			return Create(createInfo);
-		}
-	};
-
-	class event
-	{
-	private :
-		VkEvent handle = VK_NULL_HANDLE;
-
-	public :
-		event(VkEventCreateInfo& createInfo)
-		{
-			Create(createInfo);
-		}
-		event(VkEventCreateFlags flags = 0)
-		{
-			Create(flags);
-		}
-		event(event&& other) noexcept { MoveHandle; }
-		~event() { DestroyHandleBy(vkDestroyEvent); }
-		//Getter
-		DefineHandleTypeOperator;
-		DefineAddressFunction;
-		void CmdSet(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from) const
-		{
-			vkCmdSetEvent(commandBuffer, handle, stage_from);
-		}
-		void CmdReset(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from) const
-		{
-			vkCmdResetEvent(commandBuffer, handle, stage_from);
-		}
-		void CmdWait(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from, VkPipelineStageFlags stage_to,
-			arrayRef<VkMemoryBarrier> memoryBarriers,
-			arrayRef<VkBufferMemoryBarrier> bufferMemoryBarriers,
-			arrayRef<VkImageMemoryBarrier> imageMemoryBarriers)
-		{
-			for (auto& i : memoryBarriers)
-				i.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-			for (auto& i : bufferMemoryBarriers)
-				i.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-			for (auto& i : imageMemoryBarriers)
-				i.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-			vkCmdWaitEvents(commandBuffer, 1, &handle, stage_from, stage_to,
-				memoryBarriers.Count(), memoryBarriers.Pointer(),
-				bufferMemoryBarriers.Count(), bufferMemoryBarriers.Pointer(),
-				imageMemoryBarriers.Count(), imageMemoryBarriers.Pointer());
-		}
-		result_t Set() const
-		{
-			VkResult result = vkSetEvent(graphicsBase::Base().Device(), handle);
-			if (result)
-				outStream << std::format("[ event ] ERROR\nFailed to singal the event!\nError code: {}\n", string_VkResult(result));
-			return result;
-		}
-		result_t Reset() const
-		{
-			VkResult result = vkResetEvent(graphicsBase::Base().Device(), handle);
-			if (result)
-				outStream << std::format("[ event ] ERROR\nFailed to unsingal the event!\nError code: {}\n", string_VkResult(result));
-			return result;
-		}
-		result_t Status() const
-		{
-			VkResult result = vkGetEventStatus(graphicsBase::Base().Device(), handle);
-			if (result < 0) //vkGetEventStatus(...)成功时有两种结果
-				outStream << std::format("[ event ] ERROR\nFailed to get the status of the event!\nError code: {}\n", string_VkResult(result));
-			return result;
-		}
-		result_t Create(VkEventCreateInfo& createInfo)
-		{
-			createInfo.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
-			VkResult result = vkCreateEvent(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
-			if (result)
-				outStream << std::format("[ event ] ERROR\nFailed to create an event!\nError code: {}\n", string_VkResult(result));
-			return result;
-		}
-		result_t Create(VkEventCreateFlags flags = 0)
-		{
-			VkEventCreateInfo createInfo =
-			{
-				.flags = flags
-			};
-			return Create(createInfo);
-		}
-	};
 };
-}
+
+class semaphore
+{
+private:
+	// VkSemaphore: GPU 队列之间用于排序的二值信号量
+	VkSemaphore handle = VK_NULL_HANDLE;
+
+public:
+	semaphore(VkSemaphoreCreateInfo& createInfo)
+	{
+		Create(createInfo);
+	}
+	//默认构造器创建未置位的信号量
+	semaphore(/*VkSemaphoreCreateFlags flags*/)
+	{
+		Create();
+	}
+	semaphore(semaphore&& other) noexcept { MoveHandle; }
+	~semaphore() { DestroyHandleBy(vkDestroySemaphore); }
+	//Getter
+	DefineHandleTypeOperator;
+	DefineAddressFunction;
+	//Non-const Function
+	result_t Create(VkSemaphoreCreateInfo& createInfo)
+	{
+		createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		VkResult result = vkCreateSemaphore(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+		if (result)
+			outStream << std::format("[ semaphore ] ERROR\nFailed to create a semaphore!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t Create(/*VkSemaphoreCreateFlags flags*/)
+	{
+		VkSemaphoreCreateInfo createInfo = {};
+		return Create(createInfo);
+	}
+};
+
+class commandBuffer
+{
+private:
+	// VkCommandBuffer: 用来录制并提交给队列执行的命令缓冲区，本章暂时只录制空命令
+	VkCommandBuffer handle = VK_NULL_HANDLE;
+
+public:
+	commandBuffer() = default;
+	commandBuffer(commandBuffer&& other) noexcept { MoveHandle; }
+	// VkCommandBuffer 由 VkCommandPool 分配和释放，析构时不直接调用 Vulkan 销毁函数
+	~commandBuffer() = default;
+	//Getter
+	DefineHandleTypeOperator;
+	VkCommandBuffer* Address() { return &handle; }
+	const VkCommandBuffer* Address() const { return &handle; }
+	//开始录制命令缓冲区
+	result_t Begin(VkCommandBufferUsageFlags usageFlags = 0) const
+	{
+		// VkCommandBufferBeginInfo: 描述本次命令缓冲区录制的使用方式
+		VkCommandBufferBeginInfo beginInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = usageFlags
+		};
+		VkResult result = vkBeginCommandBuffer(handle, &beginInfo);
+		if (result)
+			outStream << std::format("[ commandBuffer ] ERROR\nFailed to begin command buffer recording!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	//结束命令缓冲区录制
+	result_t End() const
+	{
+		VkResult result = vkEndCommandBuffer(handle);
+		if (result)
+			outStream << std::format("[ commandBuffer ] ERROR\nFailed to end command buffer recording!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+};
+
+class commandPool
+{
+private:
+	// VkCommandPool: 命令缓冲区的分配来源，绑定到一个具体队列族
+	VkCommandPool handle = VK_NULL_HANDLE;
+
+public:
+	commandPool(VkCommandPoolCreateInfo& createInfo)
+	{
+		Create(createInfo);
+	}
+	commandPool(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags flags = 0)
+	{
+		Create(queueFamilyIndex, flags);
+	}
+	commandPool(commandPool&& other) noexcept { MoveHandle; }
+	~commandPool() { DestroyHandleBy(vkDestroyCommandPool); }
+	// Getter
+	DefineHandleTypeOperator;
+	DefineAddressFunction;
+	// 创建命令池
+	result_t Create(VkCommandPoolCreateInfo& createInfo)
+	{
+		// VkCommandPoolCreateInfo: 指定命令池所属队列族，以及是否允许单独重置命令缓冲区
+		createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		VkResult result = vkCreateCommandPool(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+		if (result)
+			outStream << std::format("[ commandPool ] ERROR\nFailed to create a command pool!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t Create(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags flags = 0)
+	{
+		// queueFamilyIndex: 从该队列族分配出来的命令缓冲区只能提交给同族队列
+		VkCommandPoolCreateInfo createInfo =
+		{
+			.flags = flags,
+			.queueFamilyIndex = queueFamilyIndex
+		};
+		return Create(createInfo);
+	}
+	// 从命令池分配一个主命令缓冲区
+	result_t AllocateBuffers(commandBuffer& commandBuffer) const
+	{
+		// VkCommandBufferAllocateInfo: 描述命令缓冲区从哪个命令池分配、级别为何、数量是多少
+		VkCommandBufferAllocateInfo allocateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = handle,
+			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1
+		};
+		VkResult result = vkAllocateCommandBuffers(graphicsBase::Base().Device(), &allocateInfo, commandBuffer.Address());
+		if (result)
+			outStream << std::format("[ commandPool ] ERROR\nFailed to allocate a command buffer!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+};
+
+class event
+{
+private:
+	VkEvent handle = VK_NULL_HANDLE;
+
+public:
+	event(VkEventCreateInfo& createInfo)
+	{
+		Create(createInfo);
+	}
+	event(VkEventCreateFlags flags = 0)
+	{
+		Create(flags);
+	}
+	event(event&& other) noexcept { MoveHandle; }
+	~event() { DestroyHandleBy(vkDestroyEvent); }
+	//Getter
+	DefineHandleTypeOperator;
+	DefineAddressFunction;
+	void CmdSet(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from) const
+	{
+		vkCmdSetEvent(commandBuffer, handle, stage_from);
+	}
+	void CmdReset(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from) const
+	{
+		vkCmdResetEvent(commandBuffer, handle, stage_from);
+	}
+	void CmdWait(VkCommandBuffer commandBuffer, VkPipelineStageFlags stage_from, VkPipelineStageFlags stage_to,
+		arrayRef<VkMemoryBarrier> memoryBarriers,
+		arrayRef<VkBufferMemoryBarrier> bufferMemoryBarriers,
+		arrayRef<VkImageMemoryBarrier> imageMemoryBarriers)
+	{
+		for (auto& i : memoryBarriers)
+			i.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+		for (auto& i : bufferMemoryBarriers)
+			i.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+		for (auto& i : imageMemoryBarriers)
+			i.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		vkCmdWaitEvents(commandBuffer, 1, &handle, stage_from, stage_to,
+			memoryBarriers.Count(), memoryBarriers.Pointer(),
+			bufferMemoryBarriers.Count(), bufferMemoryBarriers.Pointer(),
+			imageMemoryBarriers.Count(), imageMemoryBarriers.Pointer());
+	}
+	result_t Set() const
+	{
+		VkResult result = vkSetEvent(graphicsBase::Base().Device(), handle);
+		if (result)
+			outStream << std::format("[ event ] ERROR\nFailed to singal the event!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t Reset() const
+	{
+		VkResult result = vkResetEvent(graphicsBase::Base().Device(), handle);
+		if (result)
+			outStream << std::format("[ event ] ERROR\nFailed to unsingal the event!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t Status() const
+	{
+		VkResult result = vkGetEventStatus(graphicsBase::Base().Device(), handle);
+		if (result < 0) //vkGetEventStatus(...)成功时有两种结果
+			outStream << std::format("[ event ] ERROR\nFailed to get the status of the event!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t Create(VkEventCreateInfo& createInfo)
+	{
+		createInfo.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
+		VkResult result = vkCreateEvent(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+		if (result)
+			outStream << std::format("[ event ] ERROR\nFailed to create an event!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+	result_t Create(VkEventCreateFlags flags = 0)
+	{
+		VkEventCreateInfo createInfo =
+		{
+			.flags = flags
+		};
+		return Create(createInfo);
+	}
+};
+};
