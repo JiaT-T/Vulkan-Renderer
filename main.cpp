@@ -13,18 +13,32 @@ struct Vertex
 	glm::vec4 color;
 };
 
+struct InstanceData
+{
+	glm::vec2 offset;
+	glm::vec4 color;
+};
+
 const Vertex vertices_rectangle[] =
 {
-	{ { -0.5f, -0.5f }, { 1.0f, 1.0f, 0.0f, 1.0f } },
-	{ {  0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-	{ { -0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
-	{ {  0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
+	{ { -0.2f, -0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
+	{ {  0.2f, -0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
+	{ { -0.2f,  0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
+	{ {  0.2f,  0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } }
 };
 
 const uint16_t indices_rectangle[] =
 {
 	0, 1, 2,
 	1, 3, 2
+};
+
+const InstanceData instances_rectangle[] =
+{
+	{ { -0.45f, -0.45f }, { 1.0f, 0.25f, 0.25f, 1.0f } },
+	{ {  0.45f, -0.45f }, { 0.25f, 1.0f, 0.25f, 1.0f } },
+	{ { -0.45f,  0.45f }, { 0.25f, 0.45f, 1.0f, 1.0f } },
+	{ {  0.45f,  0.45f }, { 1.0f, 0.85f, 0.2f, 1.0f } }
 };
 
 // VkPipelineLayout: 三角形管线使用的布局，本节不包含描述符集和 push constant。
@@ -87,6 +101,26 @@ void CreatePipeline()
 				.format = VK_FORMAT_R32G32B32A32_SFLOAT,
 				.offset = offsetof(Vertex, color)
 			});
+		pipelineCiPack.vertexInputBindings.push_back(
+			{
+				.binding = 1,
+				.stride = sizeof(InstanceData),
+				.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE
+			});
+		pipelineCiPack.vertexInputAttributes.push_back(
+			{
+				.location = 2,
+				.binding = 1,
+				.format = VK_FORMAT_R32G32_SFLOAT,
+				.offset = offsetof(InstanceData, offset)
+			});
+		pipelineCiPack.vertexInputAttributes.push_back(
+			{
+				.location = 3,
+				.binding = 1,
+				.format = VK_FORMAT_R32G32B32A32_SFLOAT,
+				.offset = offsetof(InstanceData, color)
+			});
 
 		// VkViewport: 让标准化设备坐标覆盖整个交换链图像。
 		pipelineCiPack.viewports.push_back({ 0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f });
@@ -137,6 +171,9 @@ int Run()
 	bufferMemory indexBuffer_rectangle;
 	if (indexBuffer_rectangle.CreateDeviceLocal(indices_rectangle, sizeof(indices_rectangle), VK_BUFFER_USAGE_INDEX_BUFFER_BIT))
 		return -1;
+	bufferMemory instanceBuffer_rectangles;
+	if (instanceBuffer_rectangles.CreateDeviceLocal(instances_rectangle, sizeof(instances_rectangle), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT))
+		return -1;
 
 	// VkFence: 渲染提交完成后由 GPU 置位，CPU 在循环末尾等待并重置它。
 	fence fence;
@@ -176,10 +213,11 @@ int Run()
 
 		// VkPipeline: 绑定图形管线后，后续 draw 命令使用该管线状态执行。
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_triangle);
-		VkDeviceSize vertexBufferOffset = 0;
-		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffer_rectangle.Address(), &vertexBufferOffset);
+		VkBuffer vertexBuffers[] = { vertexBuffer_rectangle, instanceBuffer_rectangles };
+		VkDeviceSize vertexBufferOffsets[] = { 0, 0 };
+		vkCmdBindVertexBuffers(commandBuffer, 0, 2, vertexBuffers, vertexBufferOffsets);
 		vkCmdBindIndexBuffer(commandBuffer, indexBuffer_rectangle, 0, VK_INDEX_TYPE_UINT16);
-		vkCmdDrawIndexed(commandBuffer, uint32_t(std::size(indices_rectangle)), 1, 0, 0, 0);
+		vkCmdDrawIndexed(commandBuffer, uint32_t(std::size(indices_rectangle)), uint32_t(std::size(instances_rectangle)), 0, 0, 0);
 
 		renderPass.CmdEnd(commandBuffer);
 		commandBuffer.End();

@@ -17,12 +17,12 @@
 - Notes: Vertex and index data both use staging uploads into separate device-local buffers. CPU index type, bind type, and draw count are consistent.
 
 ## Ch7-3 Instancing
-- Status: Not started
-- Files changed: None
-- Build: Not run
-- Runtime: Not run
-- Validation: Not run
-- Notes: None
+- Status: Complete
+- Files changed: `main.cpp`, `shader/FirstTriangle.vert.shader`, `PROGRESS.md`
+- Build: Both GLSL stages compiled and passed `spirv-val`; Debug x64 CMake build succeeded.
+- Runtime: One indexed draw call rendered four rectangles at distinct offsets with red, green, blue, and yellow instance colors.
+- Validation: Khronos Validation loaded; no ERROR or VUID was emitted during run or graceful shutdown.
+- Notes: Binding 0 advances per vertex. Binding 1 advances per instance and supplies `InstanceData { offset, color }`. `instanceCount` is four; there is no CPU draw loop.
 
 ## Ch7-4 Push Constant
 - Status: Not started
