@@ -605,8 +605,7 @@ public:
 			return result;
 		}
 
-		VkPhysicalDeviceFeatures features;
-		vkGetPhysicalDeviceFeatures(graphicsBase::Base().PhysicalDevice(), &features);
+		const VkPhysicalDeviceFeatures& enabledFeatures = graphicsBase::Base().EnabledFeatures2().features;
 		VkSamplerCreateInfo samplerCreateInfo =
 		{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -616,8 +615,8 @@ public:
 			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.anisotropyEnable = features.samplerAnisotropy,
-			.maxAnisotropy = features.samplerAnisotropy
+			.anisotropyEnable = enabledFeatures.samplerAnisotropy,
+			.maxAnisotropy = enabledFeatures.samplerAnisotropy
 				? graphicsBase::Base().PhysicalDeviceProperties().limits.maxSamplerAnisotropy
 				: 1.0f,
 			.compareEnable = VK_FALSE,

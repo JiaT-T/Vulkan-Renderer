@@ -7,6 +7,7 @@
 #include <stack>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <span>
 #include <memory>
 #include <functional>

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <array>
 #include <thread>
+#include <string_view>
 
 using namespace vulkan;
 using namespace easyVulkan;
@@ -276,8 +277,6 @@ VkResult ShowBootImage(const char* filepath)
 		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	if (!result)
-		result = sourceImage.CreateView();
-	if (!result)
 		result = ExecuteGraphicsCommands([&](VkCommandBuffer commandBuffer) {
 			const VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 			imageOperation::CmdTransitionLayout(commandBuffer, sourceImage,
@@ -327,13 +326,17 @@ VkResult ShowBootImage(const char* filepath)
 		return result;
 	if ((result = transferFinished.WaitAndReset()))
 		return result;
+	// 呈现操作不受 transferFinished 栅栏保护；启动图只执行一次，此处等待呈现队列后
+	// 再销毁局部二值信号量，避免信号量仍被 WSI 使用。
+	if ((result = vkQueueWaitIdle(graphicsBase::Base().Queue_Presentation())))
+		return result;
 
 	outStream << std::format("[ Ch7-6 ] Blitted {}x{} image to {}x{} swapchain image.\n",
 		width, height, windowSize.width, windowSize.height);
 	return VK_SUCCESS;
 }
 
-int Run()
+int Run(bool selfTest)
 {
 	if (ShowBootImage("textures/viking_room.png"))
 		return -1;
@@ -407,8 +410,9 @@ int Run()
 	fence fence;
 	// VkSemaphore: 获取交换链图像成功后置位，图形队列提交前等待它。
 	semaphore semaphore_imageIsAvailable;
-	// VkSemaphore: 命令缓冲区执行完成后置位，呈现图像前等待它。
-	semaphore semaphore_renderingIsOver;
+	// 呈现等待信号量按交换链图像索引分配；只有同一图像再次被获取时，
+	// 上一次使用它的呈现操作才已完成，可以安全复用对应信号量。
+	std::vector<semaphore> semaphores_renderingIsOver(graphicsBase::Base().SwapchainImageCount());
 
 	// VkCommandBuffer: 每帧录制一次并提交到图形队列。
 	commandBuffer commandBuffer;
@@ -424,15 +428,57 @@ int Run()
 	clearColor.color.float32[2] = 0.f;
 	clearColor.color.float32[3] = 1.f;
 
+	const double selfTestStartTime = glfwGetTime();
+	bool selfTestResized = false;
+	bool selfTestMinimized = false;
+	bool selfTestRestored = false;
 	while (!glfwWindowShouldClose(pWindow))
 	{
 		// 窗口最小化时暂停渲染循环，避免交换链图像获取和提交产生无意义错误。
 		while (glfwGetWindowAttrib(pWindow, GLFW_ICONIFIED))
-			glfwWaitEvents();
+		{
+			glfwWaitEventsTimeout(0.1);
+			if (selfTest && !selfTestRestored && glfwGetTime() - selfTestStartTime >= 2.5)
+			{
+				glfwRestoreWindow(pWindow);
+				selfTestRestored = true;
+				outStream << "[ SelfTest ] Window restored.\n";
+			}
+		}
+
+		const double selfTestElapsed = glfwGetTime() - selfTestStartTime;
+		if (selfTest && selfTestMinimized && !selfTestRestored && selfTestElapsed >= 2.5)
+		{
+			glfwRestoreWindow(pWindow);
+			selfTestRestored = true;
+			outStream << "[ SelfTest ] Window restored.\n";
+		}
+		if (selfTest && !selfTestResized && selfTestElapsed >= 0.5)
+		{
+			glfwSetWindowSize(pWindow, 960, 540);
+			selfTestResized = true;
+			outStream << "[ SelfTest ] Window resized to 960x540.\n";
+		}
+		if (selfTest && !selfTestMinimized && selfTestElapsed >= 1.5)
+		{
+			glfwIconifyWindow(pWindow);
+			selfTestMinimized = true;
+			outStream << "[ SelfTest ] Window minimized.\n";
+			continue;
+		}
+		if (selfTest && selfTestElapsed >= 3.5)
+		{
+			outStream << "[ SelfTest ] Completed; requesting graceful shutdown.\n";
+			glfwSetWindowShouldClose(pWindow, GLFW_TRUE);
+			continue;
+		}
 
 		// 获取当前可写入的交换链图像索引，并在图像可用时置位 semaphore_imageIsAvailable。
 		graphicsBase::Base().SwapImage(semaphore_imageIsAvailable);
 		auto imageIndex = graphicsBase::Base().CurrentImageIndex();
+		while (semaphores_renderingIsOver.size() < graphicsBase::Base().SwapchainImageCount())
+			semaphores_renderingIsOver.emplace_back();
+		VkSemaphore semaphore_renderingIsOver = semaphores_renderingIsOver[imageIndex];
 		constexpr uint32_t frameIndex = 0;
 		const float time = float(glfwGetTime());
 		UniformData uniformData =
@@ -487,18 +533,27 @@ int Run()
 		fence.WaitAndReset();
 	}
 
+	// fence 只覆盖图形提交，不覆盖 WSI 呈现；在局部信号量析构前等待呈现队列。
+	if (VkResult result = vkQueueWaitIdle(graphicsBase::Base().Queue_Presentation()))
+		return int(result);
+
 	return 0;
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+	bool selfTest = false;
+	for (int i = 1; i < argc; i++)
+		if (std::string_view(argv[i]) == "--self-test")
+			selfTest = true;
+
 	if (!InitializeWindow({ 1280, 720 }))
 	{
 		TerminateWindow();
 		return -1;
 	}
 
-	const int result = Run();
+	const int result = Run(selfTest);
 	TerminateWindow();
 	return result;
 }

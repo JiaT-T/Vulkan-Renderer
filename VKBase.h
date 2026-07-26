@@ -4,6 +4,34 @@
 
 namespace vulkan
 {
+// Vulkan 扩展结构都以 sType/pNext 开头。该类统一维护链首，并阻止同一对象
+// 或同一 sType 被意外重复加入；少数规范允许重复 sType 的场景可显式放行。
+class pNextChain
+{
+private:
+	void* head = nullptr;
+	std::unordered_set<const void*> objects;
+	std::unordered_set<VkStructureType> structureTypes;
+
+public:
+	template<typename Structure>
+	bool Add(Structure& structure, bool allowDuplicateStructureType = false)
+	{
+		const void* address = &structure;
+		if (objects.contains(address) ||
+			(!allowDuplicateStructureType && structureTypes.contains(structure.sType)))
+			return false;
+		structure.pNext = head;
+		head = &structure;
+		objects.insert(address);
+		structureTypes.insert(structure.sType);
+		return true;
+	}
+
+	void* Head() const { return head; }
+	bool Empty() const { return head == nullptr; }
+};
+
 // 指定窗口大小
 // 因为是全局变量，所以需要在类外定义，使用constexpr来确保它在编译时就被初始化，并且在程序运行期间保持不变
 constexpr VkExtent2D defaultWindowSize = { 1280, 720 };
@@ -12,7 +40,15 @@ constexpr VkExtent2D defaultWindowSize = { 1280, 720 };
 class graphicsBase
 {
 private:
-	graphicsBase() = default;
+	graphicsBase()
+	{
+		physicalDeviceFeatureQueryChain.Add(supportedVulkan11Features);
+		physicalDeviceFeatureQueryChain.Add(supportedVulkan12Features);
+		physicalDeviceFeatureQueryChain.Add(supportedVulkan13Features);
+		physicalDevicePropertyQueryChain.Add(vulkan11Properties);
+		physicalDevicePropertyQueryChain.Add(vulkan12Properties);
+		physicalDevicePropertyQueryChain.Add(vulkan13Properties);
+	}
 	~graphicsBase()
 	{
 
@@ -34,6 +70,7 @@ private :
 	VkInstance instance;
 	std::vector<const char*> instanceLayers;
 	std::vector<const char*> instanceExtensions;
+	pNextChain instanceCreateChain;
 
 	//该函数用于向instanceLayers或instanceExtensions容器中添加字符串指针，并确保不重复
 	static void AddLayerOrExtension(std::vector<const char*>& container, const char* name)
@@ -68,6 +105,13 @@ public :
 	{
 		AddLayerOrExtension(instanceExtensions, extensionName);
 	}
+	template<typename Structure>
+	bool AddInstanceCreateInfo(Structure& structure, bool allowDuplicateStructureType = false)
+	{
+		if (structure.sType == VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO)
+			return false;
+		return instanceCreateChain.Add(structure, allowDuplicateStructureType);
+	}
 	//该函数用于创建Vulkan实例
 	result_t CreateInstance(VkInstanceCreateFlags flags = 0)
 	{
@@ -89,6 +133,7 @@ public :
 		VkInstanceCreateInfo createInfo =
 		{
 			.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+			.pNext = instanceCreateChain.Head(),
 			.flags = flags,
 			.pApplicationInfo = &appInfo,
 			.enabledLayerCount = uint32_t(instanceLayers.size()),
@@ -103,9 +148,13 @@ public :
 			outStream << std::format("[ graphicsBase ] ERROR\nFailed to create a vulkan instance!\nError code: {}\n", int32_t(result));
 			return result;
 		}
-		//成功创建 Vulkan 实例后，输出Vulkan版本
+		// 成功创建 Vulkan 实例后，分别输出 Loader 能力与应用请求的 API 版本。
 		outStream << std::format(
-			"Vulkan API Version: {}.{}.{}\n",
+			"[ Ch6-0 ] Loader Vulkan version: {}.{}.{}\n"
+			"[ Ch6-0 ] Requested Vulkan API version: {}.{}.{}\n",
+			VK_API_VERSION_MAJOR(loaderApiVersion),
+			VK_API_VERSION_MINOR(loaderApiVersion),
+			VK_API_VERSION_PATCH(loaderApiVersion),
 			VK_API_VERSION_MAJOR(apiVersion),
 			VK_API_VERSION_MINOR(apiVersion),
 			VK_API_VERSION_PATCH(apiVersion));
@@ -224,7 +273,7 @@ public :
 
 // -----Debug 相关-----
 private :
-	VkDebugUtilsMessengerEXT debugMessenger;
+	VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
 	result_t CreateDebugMessenger()
 	{
 		// 返回值为 VkBool32 的回调函数
@@ -279,6 +328,16 @@ private :
 		// 这个值不会与任何实际的 VkResult 错误码以及 Vulkan 函数的返回值冲突
 		return VK_RESULT_MAX_ENUM;
 	}
+	void DestroyDebugMessenger()
+	{
+		if (!debugMessenger || !instance)
+			return;
+		auto vkDestroyDebugUtilsMessenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+			vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
+		if (vkDestroyDebugUtilsMessenger)
+			vkDestroyDebugUtilsMessenger(instance, debugMessenger, nullptr);
+		debugMessenger = VK_NULL_HANDLE;
+	}
 
 // -----Vulkan 接口(Surface)相关-----
 private :
@@ -308,6 +367,30 @@ private :
 	VkPhysicalDeviceProperties physicalDeviceProperties;
 	VkPhysicalDeviceMemoryProperties physicalDeviceMemoryProperties;
 	std::vector<VkPhysicalDevice> availablePhysicalDevices;
+
+	// “支持”查询结果与“启用”结果分开保存，避免把二者混为一谈。
+	VkPhysicalDeviceFeatures2 supportedFeatures2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+	VkPhysicalDeviceVulkan11Features supportedVulkan11Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+	VkPhysicalDeviceVulkan12Features supportedVulkan12Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+	VkPhysicalDeviceVulkan13Features supportedVulkan13Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+	pNextChain physicalDeviceFeatureQueryChain;
+
+	VkPhysicalDeviceProperties2 physicalDeviceProperties2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+	VkPhysicalDeviceVulkan11Properties vulkan11Properties = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES };
+	VkPhysicalDeviceVulkan12Properties vulkan12Properties = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES };
+	VkPhysicalDeviceVulkan13Properties vulkan13Properties = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES };
+	pNextChain physicalDevicePropertyQueryChain;
+
+	VkPhysicalDeviceMemoryProperties2 physicalDeviceMemoryProperties2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 };
+	pNextChain physicalDeviceMemoryPropertyQueryChain;
+
+	VkPhysicalDeviceFeatures2 enabledFeatures2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+	VkPhysicalDeviceVulkan11Features enabledVulkan11Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+	VkPhysicalDeviceVulkan12Features enabledVulkan12Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+	VkPhysicalDeviceVulkan13Features enabledVulkan13Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+	pNextChain deviceCreateChain;
+	bool requestSamplerAnisotropy = true;
+	bool requireSamplerAnisotropy = false;
 
 	// 逻辑设备
 	VkDevice device;
@@ -384,6 +467,49 @@ public :
 	const VkPhysicalDeviceMemoryProperties& PhysicalDeviceMemoryProperties() const
 	{
 		return physicalDeviceMemoryProperties;
+	}
+	const VkPhysicalDeviceFeatures2& SupportedFeatures2() const { return supportedFeatures2; }
+	const VkPhysicalDeviceVulkan11Features& SupportedVulkan11Features() const { return supportedVulkan11Features; }
+	const VkPhysicalDeviceVulkan12Features& SupportedVulkan12Features() const { return supportedVulkan12Features; }
+	const VkPhysicalDeviceVulkan13Features& SupportedVulkan13Features() const { return supportedVulkan13Features; }
+	const VkPhysicalDeviceFeatures2& EnabledFeatures2() const { return enabledFeatures2; }
+	const VkPhysicalDeviceVulkan11Features& EnabledVulkan11Features() const { return enabledVulkan11Features; }
+	const VkPhysicalDeviceVulkan12Features& EnabledVulkan12Features() const { return enabledVulkan12Features; }
+	const VkPhysicalDeviceVulkan13Features& EnabledVulkan13Features() const { return enabledVulkan13Features; }
+	uint32_t PhysicalDeviceApiVersion() const { return physicalDeviceProperties.apiVersion; }
+
+	template<typename Structure>
+	bool AddPhysicalDeviceFeatureQuery(Structure& structure, bool allowDuplicateStructureType = false)
+	{
+		if (structure.sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
+			return false;
+		return physicalDeviceFeatureQueryChain.Add(structure, allowDuplicateStructureType);
+	}
+	template<typename Structure>
+	bool AddPhysicalDevicePropertyQuery(Structure& structure, bool allowDuplicateStructureType = false)
+	{
+		if (structure.sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2)
+			return false;
+		return physicalDevicePropertyQueryChain.Add(structure, allowDuplicateStructureType);
+	}
+	template<typename Structure>
+	bool AddPhysicalDeviceMemoryPropertyQuery(Structure& structure, bool allowDuplicateStructureType = false)
+	{
+		if (structure.sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2)
+			return false;
+		return physicalDeviceMemoryPropertyQueryChain.Add(structure, allowDuplicateStructureType);
+	}
+	template<typename Structure>
+	bool AddDeviceCreateInfo(Structure& structure, bool allowDuplicateStructureType = false)
+	{
+		if (structure.sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
+			return false;
+		return deviceCreateChain.Add(structure, allowDuplicateStructureType);
+	}
+	void RequestSamplerAnisotropy(bool requested = true, bool required = false)
+	{
+		requestSamplerAnisotropy = requested;
+		requireSamplerAnisotropy = requested && required;
 	}
 	VkPhysicalDevice AvailablePhysicalDevice(uint32_t index) const
 	{
@@ -500,6 +626,16 @@ public :
 		// 无论是通过分支 B 刚刚查到的，还是通过分支 C 从缓存里直接读取的
 		// 只要成功找到了合法的队列族，代码就会把当前选中的物理设备句柄赋值给 physicalDevice，并返回 VK_SUCCESS
 		physicalDevice = availablePhysicalDevices[deviceIndex];
+
+		// 用 Features2/Properties2/MemoryProperties2 查询核心结构及其 pNext 链。
+		supportedFeatures2.pNext = physicalDeviceFeatureQueryChain.Head();
+		vkGetPhysicalDeviceFeatures2(physicalDevice, &supportedFeatures2);
+		physicalDeviceProperties2.pNext = physicalDevicePropertyQueryChain.Head();
+		vkGetPhysicalDeviceProperties2(physicalDevice, &physicalDeviceProperties2);
+		physicalDeviceMemoryProperties2.pNext = physicalDeviceMemoryPropertyQueryChain.Head();
+		vkGetPhysicalDeviceMemoryProperties2(physicalDevice, &physicalDeviceMemoryProperties2);
+		physicalDeviceProperties = physicalDeviceProperties2.properties;
+		physicalDeviceMemoryProperties = physicalDeviceMemoryProperties2.memoryProperties;
 		return VK_SUCCESS;
 	}
 	// 该函数用于创建逻辑设备，并取得队列
@@ -539,21 +675,34 @@ public :
 			queueFamilyIndex_compute != queueFamilyIndex_presentation)
 			queueCreateInfos[queueCreateInfoCount++].queueFamilyIndex = queueFamilyIndex_compute;
 
-		// 填充 VkPhysicalDeviceFeatures 结构体，用于保存物理设备所支持的硬件特性
-		VkPhysicalDeviceFeatures physicalDeviceFeatures;
-		// vkGetPhysicalDeviceFeatures 的作用：查询特定物理设备（显卡）所支持的硬件特性（Features）
-		vkGetPhysicalDeviceFeatures(physicalDevice, &physicalDeviceFeatures);
+		if (requireSamplerAnisotropy && !supportedFeatures2.features.samplerAnisotropy)
+		{
+			outStream << "[ graphicsBase ] ERROR\nRequired feature samplerAnisotropy is not supported.\n";
+			return VK_ERROR_FEATURE_NOT_PRESENT;
+		}
+		enabledFeatures2.features.samplerAnisotropy =
+			requestSamplerAnisotropy && supportedFeatures2.features.samplerAnisotropy;
+
+		// 版本特性结构只在物理设备实际支持相应核心版本时加入设备创建链。
+		if (physicalDeviceProperties.apiVersion >= VK_API_VERSION_1_1)
+			deviceCreateChain.Add(enabledVulkan11Features);
+		if (physicalDeviceProperties.apiVersion >= VK_API_VERSION_1_2)
+			deviceCreateChain.Add(enabledVulkan12Features);
+		if (physicalDeviceProperties.apiVersion >= VK_API_VERSION_1_3)
+			deviceCreateChain.Add(enabledVulkan13Features);
+		enabledFeatures2.pNext = deviceCreateChain.Head();
 
 		// 接下来填充 VkDeviceCreateInfo 结构体，指定创建逻辑设备时的各种参数
 		VkDeviceCreateInfo deviceCreateInfo =
 		{
 			.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,                   // 结构体的类型，本处必须是 VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO
+			.pNext = &enabledFeatures2,
 			.flags = flags,
 			.queueCreateInfoCount = queueCreateInfoCount,                    // 实际要用到的 VkDeviceQueueCreateInfo 结构体的数量
 			.pQueueCreateInfos = queueCreateInfos,							 // 指向由队列的创建信息构成的数组
 			.enabledExtensionCount = uint32_t(deviceExtensions.size()),      // 启用的设备扩展数量
 			.ppEnabledExtensionNames = deviceExtensions.data(),              // 指向由所需开启的扩展的名称构成的数组
-			.pEnabledFeatures = &physicalDeviceFeatures                      // 指向一个 VkPhysicalDeviceFeatures 结构体，指明需要开启哪些特性
+			.pEnabledFeatures = nullptr                                      // 基础特性由 pNext 中的 VkPhysicalDeviceFeatures2 提供
 		};
 		// 调用 vkCreateDevice(...) 来创建逻辑设备
 		if (VkResult result = vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device))
@@ -569,12 +718,36 @@ public :
 		if (queueFamilyIndex_compute != VK_QUEUE_FAMILY_IGNORED)
 			vkGetDeviceQueue(device, queueFamilyIndex_compute, 0, &queue_compute);
 
-		// 获取物理设备属性
-		vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
-		// 获取物理设备内存属性
-		vkGetPhysicalDeviceMemoryProperties(physicalDevice, &physicalDeviceMemoryProperties);
-		//输出所用的物理设备名称
-		outStream << std::format("Renderer: {}\n", physicalDeviceProperties.deviceName);
+		const char* deviceType = "Other";
+		switch (physicalDeviceProperties.deviceType)
+		{
+		case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: deviceType = "Integrated GPU"; break;
+		case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: deviceType = "Discrete GPU"; break;
+		case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: deviceType = "Virtual GPU"; break;
+		case VK_PHYSICAL_DEVICE_TYPE_CPU: deviceType = "CPU"; break;
+		default: break;
+		}
+		outStream << std::format(
+			"[ Ch6-0 ] Physical device Vulkan version: {}.{}.{}\n"
+			"[ Ch6-0 ] GPU: {} ({})\n"
+			"[ Ch6-0 ] Driver: {} / {} (raw version {})\n"
+			"[ Ch6-0 ] Supported key features: samplerAnisotropy={}, imagelessFramebuffer={}, dynamicRendering={}\n"
+			"[ Ch6-0 ] Enabled key features: samplerAnisotropy={}, imagelessFramebuffer={}, dynamicRendering={}\n",
+			VK_API_VERSION_MAJOR(physicalDeviceProperties.apiVersion),
+			VK_API_VERSION_MINOR(physicalDeviceProperties.apiVersion),
+			VK_API_VERSION_PATCH(physicalDeviceProperties.apiVersion),
+			physicalDeviceProperties.deviceName, deviceType,
+			vulkan12Properties.driverName, vulkan12Properties.driverInfo, physicalDeviceProperties.driverVersion,
+			supportedFeatures2.features.samplerAnisotropy != VK_FALSE,
+			supportedVulkan12Features.imagelessFramebuffer != VK_FALSE,
+			supportedVulkan13Features.dynamicRendering != VK_FALSE,
+			enabledFeatures2.features.samplerAnisotropy != VK_FALSE,
+			enabledVulkan12Features.imagelessFramebuffer != VK_FALSE,
+			enabledVulkan13Features.dynamicRendering != VK_FALSE);
+		outStream << "[ Ch6-0 ] Enabled device extensions:";
+		for (const char* extension : deviceExtensions)
+			outStream << std::format(" {}", extension);
+		outStream << "\n";
 		// 调用回调函数
 		ExecuteCallbacks(callbacks_createDevice);
 		return VK_SUCCESS;
@@ -582,7 +755,25 @@ public :
 	// 以下函数用于创建逻辑设备失败后
 	result_t CheckDeviceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const
 	{
-		/*待Ch1-3填充*/
+		uint32_t extensionCount = 0;
+		if (VkResult result = vkEnumerateDeviceExtensionProperties(physicalDevice, layerName, &extensionCount, nullptr))
+			return result;
+		std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+		if (VkResult result = vkEnumerateDeviceExtensionProperties(physicalDevice, layerName, &extensionCount, availableExtensions.data()))
+			return result;
+		for (const char*& requested : extensionsToCheck)
+		{
+			bool found = false;
+			for (const VkExtensionProperties& available : availableExtensions)
+				if (!strcmp(requested, available.extensionName))
+				{
+					found = true;
+					break;
+				}
+			if (!found)
+				requested = nullptr;
+		}
+		return VK_SUCCESS;
 	}
 	void DeviceExtensions(const std::vector<const char*>& extensionNames)
 	{
@@ -626,6 +817,8 @@ public :
 		}
 		if (instance)
 		{
+			if constexpr (ENABLE_DEBUG_MESSENGER)
+				DestroyDebugMessenger();
 			vkDestroyInstance(instance, nullptr);
 			instance = VK_NULL_HANDLE;
 		}
@@ -668,10 +861,12 @@ private :
 	std::vector <VkImageView> swapchainImageViews;
 	//保存交换链的创建信息以便重建交换链
 	VkSwapchainCreateInfoKHR swapchainCreateInfo = {};
+	pNextChain swapchainCreateChain;
 
 	//该函数被CreateSwapchain(...)和RecreateSwapchain()调用
 	result_t CreateSwapchain_Internal()
 	{
+		swapchainCreateInfo.pNext = swapchainCreateChain.Head();
 		// 创建交换链
 		if (VkResult result = vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain))
 		{
@@ -754,6 +949,13 @@ public :
 	const VkSwapchainCreateInfoKHR& SwapchainCreateInfo() const
 	{
 		return swapchainCreateInfo;
+	}
+	template<typename Structure>
+	bool AddSwapchainCreateInfo(Structure& structure, bool allowDuplicateStructureType = false)
+	{
+		if (structure.sType == VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR)
+			return false;
+		return swapchainCreateChain.Add(structure, allowDuplicateStructureType);
 	}
 	
 	// 取得 surface 的可用格式到 availableSurfaceFormats
@@ -1038,6 +1240,7 @@ public:
 
 // ----- 使用 Vulkan 的最新版本 -----
 private:
+	uint32_t loaderApiVersion = VK_API_VERSION_1_0;
 	uint32_t apiVersion = VK_API_VERSION_1_0;
 
 public:
@@ -1046,6 +1249,7 @@ public:
 	{
 		return apiVersion;
 	}
+	uint32_t LoaderApiVersion() const { return loaderApiVersion; }
 	result_t UseLatestApiVersion()
 	{
 		// PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(...) 的参数说明：
@@ -1054,7 +1258,11 @@ public:
 		if (vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceVersion"))
 		{
 			// vkEnumerateInstanceVersion(...)用于取得当前运行环境所支持的最新Vulkan版本
-			return vkEnumerateInstanceVersion(&apiVersion);
+			if (VkResult result = vkEnumerateInstanceVersion(&loaderApiVersion))
+				return result;
+			// 第六章最高使用 Vulkan 1.3；不无条件请求 Loader 暴露的更高版本。
+			apiVersion = std::min(loaderApiVersion, uint32_t(VK_API_VERSION_1_3));
+			return VK_SUCCESS;
 		}
 		return VK_SUCCESS;   //如果vkEnumerateInstanceVersion(...)不存在，说明当前环境只支持Vulkan 1.0，直接返回成功
 	}

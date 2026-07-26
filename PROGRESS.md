@@ -1,4 +1,15 @@
-# EasyVulkan Chapter 7 Progress
+# EasyVulkan Chapter 6 and 7 Progress
+
+## Ch6-0 Modern Feature Queries
+- Status: Complete
+- Files changed: `VKStart.h`, `helper.h`, `VKBase.h`, `MyVulkan.h`, `main.cpp`, `PROGRESS.md`
+- Build commands: Vulkan SDK `glslc` for both GLSL stages; `spirv-val` for both generated SPIR-V files; `cmake --build --preset vs18-x64-debug --config Debug`.
+- Runtime command: `Debug/Vulkan-Renderer.exe --self-test`, launched from the generated project directory with `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`.
+- Runtime: Process exited with code 0. The self-test logged resize to 960x540, minimize, restore, and graceful shutdown. Desktop automation was intentionally not used; final visual inspection remains a user-run check.
+- Validation: `ch6-0.validation.log` contained 0 matches for `ERROR`, `VUID`, `WARNING`, or `Validation Error`.
+- Device support: Loader 1.4.350; requested API 1.3.0; NVIDIA GeForce RTX 5070 Ti Laptop GPU, device API 1.4.325, driver 591.86. `samplerAnisotropy`, `imagelessFramebuffer`, and `dynamicRendering` are supported.
+- Enabled state: `samplerAnisotropy=true`; `imagelessFramebuffer=false`; `dynamicRendering=false`; enabled device extension is `VK_KHR_swapchain`.
+- Notes: Queries now use `VkPhysicalDeviceFeatures2`, Vulkan 1.1/1.2/1.3 feature structures, `VkPhysicalDeviceProperties2`, and `VkPhysicalDeviceMemoryProperties2`. A reusable `pNextChain` prevents duplicate objects and, by default, duplicate `sType` values. Supported and enabled feature structures are stored separately. Existing Ch7 synchronization and shutdown validation issues found by the first logged run were corrected.
 
 ## Ch7-1 Vertex Buffer
 - Status: Complete
@@ -49,9 +60,9 @@
 - Notes: Source and destination format features are checked before linear blit. Barriers use TOP_OF_PIPE→TRANSFER for undefined destinations, TRANSFER→TRANSFER for copy-to-blit visibility, and TRANSFER→BOTTOM_OF_PIPE before present. The image view is destroyed before its image, and the image before its memory.
 
 ## Ch7-7 Texture
-- Status: Implemented; user verification pending
+- Status: Complete; final visual inspection remains user-run
 - Files changed: `assets/uv_orientation_test.png`, `CMakeLists.txt`, `MyVulkan.h`, `main.cpp`, `shader/FirstTriangle.vert.shader`, `shader/FirstTriangle.frag.shader`, `PROGRESS.md`
-- Build: Not run after this stage, per user instruction.
-- Runtime: Not run after this stage, per user instruction.
-- Validation: Not run after this stage, per user instruction.
+- Build: Both GLSL stages compile successfully and Debug x64 builds successfully as part of Ch6-0 validation.
+- Runtime: The existing textured indexed instanced path completed the Ch6-0 self-test and exited normally; desktop visual inspection was not performed per the latest user instruction.
+- Validation: Khronos Validation reported no ERROR, VUID, or WARNING in the Ch6-0 legacy-path run.
 - Notes: Vertex data now includes UVs. Descriptor set binding 0 remains the UBO and binding 1 is a Combined Image Sampler. `texture2d` loads RGBA8 through stb, uploads through a staging buffer, creates a device-local sampled image, computes 11 mip levels for the 1024x1024 orientation chart, checks linear-blit format support, generates each mip with explicit per-level barriers, creates an all-mip image view, and creates a linear mipmapped sampler with feature-gated anisotropy. The final shader multiplies sampled texture color by instance and Push Constant tint. Ch7-6 boot-image blit remains in the startup path.

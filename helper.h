@@ -105,6 +105,7 @@ constexpr struct outStream_t
         returnedStream_t operator<<(const std::string& string) const
         {
             ss << string;
+			std::cout << string << std::flush;
             return {};
         }
     };
@@ -112,6 +113,7 @@ constexpr struct outStream_t
     {
         ss.clear();
         ss << string;
+		std::cout << string << std::flush;
         return {};
     }
 } outStream;
