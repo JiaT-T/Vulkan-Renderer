@@ -1,6 +1,7 @@
 #include "GLfwGeneral.hpp"
 #include "MyVulkan.h"
 #include <cstddef>
+#include <cmath>
 
 using namespace vulkan;
 using namespace easyVulkan;
@@ -18,6 +19,15 @@ struct InstanceData
 	glm::vec2 offset;
 	glm::vec4 color;
 };
+
+struct alignas(16) PushConstantData
+{
+	alignas(16) glm::vec4 color;
+	alignas(8) glm::vec2 scale;
+	glm::vec2 padding;
+};
+
+static_assert(sizeof(PushConstantData) == 32);
 
 const Vertex vertices_rectangle[] =
 {
@@ -54,8 +64,22 @@ const auto& RenderPassAndFramebuffers()
 
 void CreateLayout()
 {
-	// VkPipelineLayoutCreateInfo: 本节 shader 不访问外部资源，因此创建空管线布局。
-	VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {};
+	if (sizeof(PushConstantData) > graphicsBase::Base().PhysicalDeviceProperties().limits.maxPushConstantsSize)
+	{
+		outStream << "[ CreateLayout ] ERROR\nPush constant data exceeds maxPushConstantsSize!\n";
+		abort();
+	}
+	VkPushConstantRange pushConstantRange =
+	{
+		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+		.offset = 0,
+		.size = sizeof(PushConstantData)
+	};
+	VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo =
+	{
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = &pushConstantRange
+	};
 	pipelineLayout_triangle.Create(pipelineLayoutCreateInfo);
 	static bool callbackAdded = false;
 	if (!callbackAdded)
@@ -217,6 +241,19 @@ int Run()
 		VkDeviceSize vertexBufferOffsets[] = { 0, 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 2, vertexBuffers, vertexBufferOffsets);
 		vkCmdBindIndexBuffer(commandBuffer, indexBuffer_rectangle, 0, VK_INDEX_TYPE_UINT16);
+		const float time = float(glfwGetTime());
+		const float pulse = 0.8f + 0.2f * (0.5f + 0.5f * std::sin(time * 2.0f));
+		PushConstantData pushConstantData =
+		{
+			.color = {
+				0.75f + 0.25f * (0.5f + 0.5f * std::sin(time)),
+				0.75f + 0.25f * (0.5f + 0.5f * std::sin(time + 2.094f)),
+				0.75f + 0.25f * (0.5f + 0.5f * std::sin(time + 4.189f)),
+				1.0f },
+			.scale = { pulse, pulse }
+		};
+		vkCmdPushConstants(commandBuffer, pipelineLayout_triangle, VK_SHADER_STAGE_VERTEX_BIT,
+			0, sizeof(pushConstantData), &pushConstantData);
 		vkCmdDrawIndexed(commandBuffer, uint32_t(std::size(indices_rectangle)), uint32_t(std::size(instances_rectangle)), 0, 0, 0);
 
 		renderPass.CmdEnd(commandBuffer);

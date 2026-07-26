@@ -25,12 +25,12 @@
 - Notes: Binding 0 advances per vertex. Binding 1 advances per instance and supplies `InstanceData { offset, color }`. `instanceCount` is four; there is no CPU draw loop.
 
 ## Ch7-4 Push Constant
-- Status: Not started
-- Files changed: None
-- Build: Not run
-- Runtime: Not run
-- Validation: Not run
-- Notes: None
+- Status: Complete
+- Files changed: `main.cpp`, `shader/FirstTriangle.vert.shader`, `PROGRESS.md`
+- Build: GLSL compilation and `spirv-val` passed; Debug x64 CMake build succeeded.
+- Runtime: Two observations 1.8 seconds apart showed changing rectangle scale and color modulation while preserving one indexed instanced draw.
+- Validation: Khronos Validation loaded; no ERROR or VUID was emitted during run or graceful shutdown.
+- Notes: A 32-byte explicitly aligned push block is registered for the vertex stage. Its size is checked against `maxPushConstantsSize` and updated every command-buffer recording.
 
 ## Ch7-5 Uniform Buffer
 - Status: Not started
