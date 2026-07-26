@@ -1033,7 +1033,7 @@ struct renderPassWithImagelessFramebuffer
 	framebuffer framebuffer;
 };
 
-const auto& CreateRpwf_Screen()
+inline const auto& CreateRpwf_Screen()
 {
 	static renderPassWithFramebuffers rpwf;
 	static bool initialized = false;
@@ -1119,7 +1119,7 @@ const auto& CreateRpwf_Screen()
 	return rpwf;
 }
 
-const auto& CreateRpwf_Screen_ImagelessFramebuffer()
+inline const auto& CreateRpwf_Screen_ImagelessFramebuffer()
 {
 	static renderPassWithImagelessFramebuffer rpwf;
 	static bool initialized = false;
