@@ -10,6 +10,16 @@
 - Resize: Swapchain callbacks destroy and recreate the offscreen image, memory, view, framebuffer, descriptor pool/set, screen framebuffers, render passes, and extent-dependent pipelines.
 - Notes: The scene is drawn only into an `R8G8B8A8_UNORM` image with `COLOR_ATTACHMENT|SAMPLED` usage. Its render-pass final layout and dependency make color writes visible to the following fragment shader. A separate full-screen pass is the only draw that writes the sampled result to the swapchain. The renderer keeps one frame in flight, so the single offscreen target is not concurrently read and written by multiple frames.
 
+## Ch8-2 Depth Test and Visualization
+- Status: Implemented; user verification pending
+- Files changed: `MyVulkan.h`, `Chapter8.cpp`, `shader/DepthScene.vert.shader`, `shader/DepthScene.frag.shader`, `shader/DepthVisualize.frag.shader`, `PROGRESS.md`
+- Shader: Added instanced cube MVP/normal transformation, simple directional lighting, and raw/linearized perspective-depth display.
+- Build: Not run; validation requirements were explicitly excluded by the user.
+- Runtime: Not run. Select `--example=depth`, `--example=depth-raw`, or `--example=depth-linear`.
+- Validation: Not run.
+- Resize: Color/depth images, views, framebuffer, descriptors, screen framebuffers, render passes, and fixed-extent pipelines are recreated by swapchain callbacks.
+- Notes: The renderer selects `D32_SFLOAT` or `D16_UNORM` only when both depth-attachment and sampled-image features are present. The image uses `DEPTH_STENCIL_ATTACHMENT|SAMPLED`, a depth-only aspect, clear value 1.0, `LESS`, depth test/write, back-face culling, and CCW front faces. Three independently transformed cubes share one indexed instanced draw. Raw depth and near/far-consistent linear depth are sampled in a separate full-screen pass.
+
 ## Ch6-0 Modern Feature Queries
 - Status: Complete
 - Files changed: `VKStart.h`, `helper.h`, `VKBase.h`, `MyVulkan.h`, `main.cpp`, `PROGRESS.md`

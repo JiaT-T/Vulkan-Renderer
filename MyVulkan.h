@@ -815,6 +815,12 @@ struct graphicsPipelineCreateInfoPack
 		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT
 	};
 
+	// VkPipelineDepthStencilStateCreateInfo: 第八章深度示例按需开启深度测试与写入。
+	VkPipelineDepthStencilStateCreateInfo depthStencilStateCi =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
+	};
+
 	// VkPipelineColorBlendAttachmentState: 描述单个颜色附件的写入遮罩和混合方式。
 	std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachmentStates;
 
@@ -844,6 +850,7 @@ struct graphicsPipelineCreateInfoPack
 		createInfo.pViewportState = &viewportStateCi;
 		createInfo.pRasterizationState = &rasterizationStateCi;
 		createInfo.pMultisampleState = &multisampleStateCi;
+		createInfo.pDepthStencilState = &depthStencilStateCi;
 		createInfo.pColorBlendState = &colorBlendStateCi;
 	}
 };

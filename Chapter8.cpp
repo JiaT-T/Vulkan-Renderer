@@ -13,6 +13,85 @@ using namespace easyVulkan;
 namespace
 {
 constexpr VkFormat offscreenColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+constexpr float depthNearPlane = 0.1f;
+constexpr float depthFarPlane = 50.0f;
+
+bool FormatSupports(VkFormat format, VkFormatFeatureFlags requiredFeatures);
+
+struct CubeVertex
+{
+	glm::vec3 position;
+	glm::vec3 normal;
+	glm::vec3 color;
+};
+
+struct alignas(16) DepthSceneUniform
+{
+	alignas(16) glm::mat4 view;
+	alignas(16) glm::mat4 projection;
+	alignas(16) glm::mat4 models[3];
+	alignas(16) glm::vec4 nearFarMode;
+};
+
+const CubeVertex cubeVertices[] =
+{
+	// +Z
+	{{-0.5f,-0.5f, 0.5f},{0,0,1},{1.0f,0.25f,0.2f}}, {{ 0.5f,-0.5f, 0.5f},{0,0,1},{1.0f,0.25f,0.2f}},
+	{{ 0.5f, 0.5f, 0.5f},{0,0,1},{1.0f,0.25f,0.2f}}, {{-0.5f, 0.5f, 0.5f},{0,0,1},{1.0f,0.25f,0.2f}},
+	// -Z
+	{{ 0.5f,-0.5f,-0.5f},{0,0,-1},{0.2f,0.75f,1.0f}}, {{-0.5f,-0.5f,-0.5f},{0,0,-1},{0.2f,0.75f,1.0f}},
+	{{-0.5f, 0.5f,-0.5f},{0,0,-1},{0.2f,0.75f,1.0f}}, {{ 0.5f, 0.5f,-0.5f},{0,0,-1},{0.2f,0.75f,1.0f}},
+	// +X
+	{{ 0.5f,-0.5f, 0.5f},{1,0,0},{0.3f,1.0f,0.35f}}, {{ 0.5f,-0.5f,-0.5f},{1,0,0},{0.3f,1.0f,0.35f}},
+	{{ 0.5f, 0.5f,-0.5f},{1,0,0},{0.3f,1.0f,0.35f}}, {{ 0.5f, 0.5f, 0.5f},{1,0,0},{0.3f,1.0f,0.35f}},
+	// -X
+	{{-0.5f,-0.5f,-0.5f},{-1,0,0},{1.0f,0.75f,0.18f}}, {{-0.5f,-0.5f, 0.5f},{-1,0,0},{1.0f,0.75f,0.18f}},
+	{{-0.5f, 0.5f, 0.5f},{-1,0,0},{1.0f,0.75f,0.18f}}, {{-0.5f, 0.5f,-0.5f},{-1,0,0},{1.0f,0.75f,0.18f}},
+	// +Y
+	{{-0.5f, 0.5f, 0.5f},{0,1,0},{0.75f,0.25f,1.0f}}, {{ 0.5f, 0.5f, 0.5f},{0,1,0},{0.75f,0.25f,1.0f}},
+	{{ 0.5f, 0.5f,-0.5f},{0,1,0},{0.75f,0.25f,1.0f}}, {{-0.5f, 0.5f,-0.5f},{0,1,0},{0.75f,0.25f,1.0f}},
+	// -Y
+	{{-0.5f,-0.5f,-0.5f},{0,-1,0},{0.2f,0.95f,0.85f}}, {{ 0.5f,-0.5f,-0.5f},{0,-1,0},{0.2f,0.95f,0.85f}},
+	{{ 0.5f,-0.5f, 0.5f},{0,-1,0},{0.2f,0.95f,0.85f}}, {{-0.5f,-0.5f, 0.5f},{0,-1,0},{0.2f,0.95f,0.85f}}
+};
+
+const uint16_t cubeIndices[] =
+{
+	0,1,2, 2,3,0, 4,5,6, 6,7,4, 8,9,10, 10,11,8,
+	12,13,14, 14,15,12, 16,17,18, 18,19,16, 20,21,22, 22,23,20
+};
+
+bool IsDepthExample(RenderExample example)
+{
+	return example == RenderExample::DepthTest || example == RenderExample::DepthRaw ||
+		example == RenderExample::DepthLinear;
+}
+
+VkFormat FindDepthFormat()
+{
+	const VkFormat candidates[] = { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
+	const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+		VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+	for (VkFormat format : candidates)
+		if (FormatSupports(format, required))
+			return format;
+	return VK_FORMAT_UNDEFINED;
+}
+
+void BeginRenderPass(VkCommandBuffer commandBuffer, VkRenderPass renderPass, VkFramebuffer framebuffer,
+	VkExtent2D extent, std::span<const VkClearValue> clearValues)
+{
+	VkRenderPassBeginInfo beginInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = renderPass,
+		.framebuffer = framebuffer,
+		.renderArea = { {}, extent },
+		.clearValueCount = uint32_t(clearValues.size()),
+		.pClearValues = clearValues.data()
+	};
+	vkCmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
+}
 
 bool FormatSupports(VkFormat format, VkFormatFeatureFlags requiredFeatures)
 {
@@ -62,6 +141,40 @@ VkResult CreateNoVertexPipeline(shaderModule& vertexShader, shaderModule& fragme
 	return output.Create(pack);
 }
 
+VkResult CreateDepthScenePipeline(shaderModule& vertexShader, shaderModule& fragmentShader,
+	VkPipelineLayout layout, VkRenderPass renderPass, pipeline& output, VkExtent2D extent)
+{
+	VkPipelineShaderStageCreateInfo stages[] =
+	{
+		vertexShader.StageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT),
+		fragmentShader.StageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT)
+	};
+	graphicsPipelineCreateInfoPack pack;
+	pack.createInfo.layout = layout;
+	pack.createInfo.renderPass = renderPass;
+	pack.createInfo.stageCount = uint32_t(std::size(stages));
+	pack.createInfo.pStages = stages;
+	pack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	pack.vertexInputBindings.push_back({ 0, sizeof(CubeVertex), VK_VERTEX_INPUT_RATE_VERTEX });
+	pack.vertexInputAttributes.push_back({ 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeVertex, position) });
+	pack.vertexInputAttributes.push_back({ 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeVertex, normal) });
+	pack.vertexInputAttributes.push_back({ 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeVertex, color) });
+	pack.viewports.push_back({ 0.0f, 0.0f, float(extent.width), float(extent.height), 0.0f, 1.0f });
+	pack.scissors.push_back({ {}, extent });
+	pack.rasterizationStateCi.cullMode = VK_CULL_MODE_BACK_BIT;
+	pack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	pack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+	pack.depthStencilStateCi.depthTestEnable = VK_TRUE;
+	pack.depthStencilStateCi.depthWriteEnable = VK_TRUE;
+	pack.depthStencilStateCi.depthCompareOp = VK_COMPARE_OP_LESS;
+	pack.depthStencilStateCi.maxDepthBounds = 1.0f;
+	pack.colorBlendAttachmentStates.push_back(
+		{ .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+			VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT });
+	pack.UpdateAllArrays();
+	return output.Create(pack);
+}
+
 class Chapter8Renderer;
 Chapter8Renderer* activeRenderer = nullptr;
 
@@ -92,7 +205,7 @@ public:
 
 	int Run()
 	{
-		if (example != RenderExample::Offscreen)
+		if (example != RenderExample::Offscreen && !IsDepthExample(example))
 		{
 			outStream << "[ Chapter8 ] ERROR\nThe requested Chapter 8 example has not been initialized.\n";
 			return -1;
@@ -119,10 +232,18 @@ public:
 			const uint32_t imageIndex = graphicsBase::Base().CurrentImageIndex();
 			while (renderFinished.size() < graphicsBase::Base().SwapchainImageCount())
 				renderFinished.emplace_back();
+			if (IsDepthExample(example))
+			{
+				if (VkResult result = UpdateDepthUniform())
+					return int(result);
+			}
 
 			if (VkResult result = commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT))
 				return int(result);
-			RecordOffscreenFrame(commandBuffer, imageIndex);
+			if (example == RenderExample::Offscreen)
+				RecordOffscreenFrame(commandBuffer, imageIndex);
+			else
+				RecordDepthFrame(commandBuffer, imageIndex);
 			if (VkResult result = commandBuffer.End())
 				return int(result);
 
@@ -147,16 +268,20 @@ public:
 		DestroySwapchainResources();
 		swapchainRecreationFailed = false;
 		VkResult result = CreateOffscreenImage();
-		if (!result)
+		if (!result && IsDepthExample(example))
+			result = CreateDepthImage();
+		if (!result && IsDepthExample(example))
+			result = CreateDepthRenderPass();
+		else if (!result)
 			result = CreateOffscreenRenderPass();
 		if (!result)
 			result = CreateScreenRenderPass();
 		if (!result)
 			result = CreateFramebuffers();
 		if (!result)
-			result = CreateOffscreenDescriptor();
+			result = CreateDescriptors();
 		if (!result)
-			result = CreateOffscreenPipelines();
+			result = IsDepthExample(example) ? CreateDepthPipelines() : CreateOffscreenPipelines();
 		if (result)
 		{
 			swapchainRecreationFailed = true;
@@ -169,13 +294,20 @@ public:
 	{
 		screenFramebuffers.clear();
 		offscreenFramebuffer.Destroy();
+		depthFramebuffer.Destroy();
 		offscreenPipeline.Destroy();
 		fullscreenPipeline.Destroy();
+		depthScenePipeline.Destroy();
+		depthVisualizePipeline.Destroy();
 		offscreenRenderPass.Destroy();
+		depthRenderPass.Destroy();
 		screenRenderPass.Destroy();
 		offscreenDescriptorPool.Destroy();
+		depthImage.Destroy();
 		offscreenColor.Destroy();
 		offscreenDescriptorSet = VK_NULL_HANDLE;
+		depthDescriptorSet = VK_NULL_HANDLE;
+		depthSceneDescriptorSet = VK_NULL_HANDLE;
 	}
 
 private:
@@ -197,32 +329,52 @@ private:
 	descriptorSetLayout offscreenDescriptorSetLayout;
 	descriptorPool offscreenDescriptorPool;
 	VkDescriptorSet offscreenDescriptorSet = VK_NULL_HANDLE;
+	VkDescriptorSet depthDescriptorSet = VK_NULL_HANDLE;
 	shaderModule offscreenVertexShader;
 	shaderModule offscreenFragmentShader;
 	shaderModule fullscreenVertexShader;
 	shaderModule fullscreenFragmentShader;
 
+	VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+	imageMemory depthImage;
+	renderPass depthRenderPass;
+	framebuffer depthFramebuffer;
+	pipeline depthScenePipeline;
+	pipeline depthVisualizePipeline;
+	pipelineLayout depthScenePipelineLayout;
+	descriptorSetLayout depthSceneDescriptorSetLayout;
+	VkDescriptorSet depthSceneDescriptorSet = VK_NULL_HANDLE;
+	bufferMemory cubeVertexBuffer;
+	bufferMemory cubeIndexBuffer;
+	bufferMemory depthUniformBuffer;
+	shaderModule depthSceneVertexShader;
+	shaderModule depthSceneFragmentShader;
+	shaderModule depthVisualizeFragmentShader;
+
 	void RegisterSwapchainCallbacks();
 
 	VkResult CreateDeviceResources()
 	{
-		if (example != RenderExample::Offscreen)
+		if (example != RenderExample::Offscreen && !IsDepthExample(example))
 			return VK_SUCCESS;
 
-		VkPushConstantRange pushRange =
+		VkResult result = VK_SUCCESS;
+		if (example == RenderExample::Offscreen)
 		{
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-			.offset = 0,
-			.size = sizeof(glm::vec4)
-		};
-		VkPipelineLayoutCreateInfo offscreenLayoutCi =
-		{
-			.pushConstantRangeCount = 1,
-			.pPushConstantRanges = &pushRange
-		};
-		VkResult result = offscreenPipelineLayout.Create(offscreenLayoutCi);
-		if (result)
-			return result;
+			VkPushConstantRange pushRange =
+			{
+				.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+				.offset = 0,
+				.size = sizeof(glm::vec4)
+			};
+			VkPipelineLayoutCreateInfo offscreenLayoutCi =
+			{
+				.pushConstantRangeCount = 1,
+				.pPushConstantRanges = &pushRange
+			};
+			if ((result = offscreenPipelineLayout.Create(offscreenLayoutCi)))
+				return result;
+		}
 
 		VkDescriptorSetLayoutBinding sampledColorBinding =
 		{
@@ -239,10 +391,18 @@ private:
 		result = offscreenDescriptorSetLayout.Create(setLayoutCi);
 		if (result)
 			return result;
+		VkPushConstantRange fullscreenPushRange =
+		{
+			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			.offset = 0,
+			.size = sizeof(glm::vec4)
+		};
 		VkPipelineLayoutCreateInfo fullscreenLayoutCi =
 		{
 			.setLayoutCount = 1,
-			.pSetLayouts = offscreenDescriptorSetLayout.Address()
+			.pSetLayouts = offscreenDescriptorSetLayout.Address(),
+			.pushConstantRangeCount = 1,
+			.pPushConstantRanges = &fullscreenPushRange
 		};
 		result = fullscreenPipelineLayout.Create(fullscreenLayoutCi);
 		if (result)
@@ -250,11 +410,45 @@ private:
 		result = CreateFullscreenSampler(offscreenSampler);
 		if (result)
 			return result;
-		if ((result = offscreenVertexShader.Create("shader/Offscreen.vert.spv")) ||
-			(result = offscreenFragmentShader.Create("shader/Offscreen.frag.spv")) ||
-			(result = fullscreenVertexShader.Create("shader/Fullscreen.vert.spv")) ||
+		if ((result = fullscreenVertexShader.Create("shader/Fullscreen.vert.spv")) ||
 			(result = fullscreenFragmentShader.Create("shader/Fullscreen.frag.spv")))
 			return result;
+		if (example == RenderExample::Offscreen)
+		{
+			if ((result = offscreenVertexShader.Create("shader/Offscreen.vert.spv")) ||
+				(result = offscreenFragmentShader.Create("shader/Offscreen.frag.spv")))
+				return result;
+		}
+		else
+		{
+			VkDescriptorSetLayoutBinding uniformBinding =
+			{
+				.binding = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+			};
+			VkDescriptorSetLayoutCreateInfo depthSetLayoutCi =
+			{
+				.bindingCount = 1,
+				.pBindings = &uniformBinding
+			};
+			if ((result = depthSceneDescriptorSetLayout.Create(depthSetLayoutCi)))
+				return result;
+			VkPipelineLayoutCreateInfo depthLayoutCi =
+			{
+				.setLayoutCount = 1,
+				.pSetLayouts = depthSceneDescriptorSetLayout.Address()
+			};
+			if ((result = depthScenePipelineLayout.Create(depthLayoutCi)) ||
+				(result = cubeVertexBuffer.CreateDeviceLocal(cubeVertices, sizeof(cubeVertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)) ||
+				(result = cubeIndexBuffer.CreateDeviceLocal(cubeIndices, sizeof(cubeIndices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT)) ||
+				(result = depthUniformBuffer.CreateHostVisible(sizeof(DepthSceneUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) ||
+				(result = depthSceneVertexShader.Create("shader/DepthScene.vert.spv")) ||
+				(result = depthSceneFragmentShader.Create("shader/DepthScene.frag.spv")) ||
+				(result = depthVisualizeFragmentShader.Create("shader/DepthVisualize.frag.spv")))
+				return result;
+		}
 		return VK_SUCCESS;
 	}
 
@@ -264,6 +458,12 @@ private:
 		offscreenFragmentShader.Destroy();
 		fullscreenVertexShader.Destroy();
 		fullscreenFragmentShader.Destroy();
+		depthSceneVertexShader.Destroy();
+		depthSceneFragmentShader.Destroy();
+		depthVisualizeFragmentShader.Destroy();
+		cubeVertexBuffer.Destroy();
+		cubeIndexBuffer.Destroy();
+		depthUniformBuffer.Destroy();
 		if (offscreenSampler)
 		{
 			vkDestroySampler(graphicsBase::Base().Device(), offscreenSampler, nullptr);
@@ -271,7 +471,9 @@ private:
 		}
 		fullscreenPipelineLayout.Destroy();
 		offscreenPipelineLayout.Destroy();
+		depthScenePipelineLayout.Destroy();
 		offscreenDescriptorSetLayout.Destroy();
+		depthSceneDescriptorSetLayout.Destroy();
 	}
 
 	VkResult CreateOffscreenImage()
@@ -290,6 +492,94 @@ private:
 		if (!result)
 			result = offscreenColor.CreateView(VK_IMAGE_ASPECT_COLOR_BIT);
 		return result;
+	}
+
+	VkResult CreateDepthImage()
+	{
+		depthFormat = FindDepthFormat();
+		if (depthFormat == VK_FORMAT_UNDEFINED)
+		{
+			outStream << "[ Ch8-2 ] ERROR\nNo sampled depth-attachment format is supported.\n";
+			return VK_ERROR_FORMAT_NOT_SUPPORTED;
+		}
+		VkResult result = depthImage.Create({ windowSize.width, windowSize.height, 1 }, 1, depthFormat,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		if (!result)
+			result = depthImage.CreateView(VK_IMAGE_ASPECT_DEPTH_BIT);
+		return result;
+	}
+
+	VkResult CreateDepthRenderPass()
+	{
+		VkAttachmentDescription attachments[] =
+		{
+			{
+				.format = offscreenColorFormat,
+				.samples = VK_SAMPLE_COUNT_1_BIT,
+				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+				.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+			},
+			{
+				.format = depthFormat,
+				.samples = VK_SAMPLE_COUNT_1_BIT,
+				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+				.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+			}
+		};
+		VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+		VkAttachmentReference depthReference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+		VkSubpassDescription subpass =
+		{
+			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			.colorAttachmentCount = 1,
+			.pColorAttachments = &colorReference,
+			.pDepthStencilAttachment = &depthReference
+		};
+		VkSubpassDependency dependencies[] =
+		{
+			{
+				.srcSubpass = VK_SUBPASS_EXTERNAL,
+				.dstSubpass = 0,
+				.srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+					VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+				.srcAccessMask = 0,
+				.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+					VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT
+			},
+			{
+				.srcSubpass = 0,
+				.dstSubpass = VK_SUBPASS_EXTERNAL,
+				.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+					VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+				.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+					VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+				.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT
+			}
+		};
+		VkRenderPassCreateInfo createInfo =
+		{
+			.attachmentCount = uint32_t(std::size(attachments)),
+			.pAttachments = attachments,
+			.subpassCount = 1,
+			.pSubpasses = &subpass,
+			.dependencyCount = uint32_t(std::size(dependencies)),
+			.pDependencies = dependencies
+		};
+		return depthRenderPass.Create(createInfo);
 	}
 
 	VkResult CreateOffscreenRenderPass()
@@ -388,17 +678,35 @@ private:
 
 	VkResult CreateFramebuffers()
 	{
-		VkImageView offscreenAttachment = offscreenColor.View();
-		VkFramebufferCreateInfo offscreenCi =
+		VkResult result = VK_SUCCESS;
+		if (IsDepthExample(example))
 		{
-			.renderPass = offscreenRenderPass,
-			.attachmentCount = 1,
-			.pAttachments = &offscreenAttachment,
-			.width = windowSize.width,
-			.height = windowSize.height,
-			.layers = 1
-		};
-		VkResult result = offscreenFramebuffer.Create(offscreenCi);
+			VkImageView attachments[] = { offscreenColor.View(), depthImage.View() };
+			VkFramebufferCreateInfo depthCi =
+			{
+				.renderPass = depthRenderPass,
+				.attachmentCount = uint32_t(std::size(attachments)),
+				.pAttachments = attachments,
+				.width = windowSize.width,
+				.height = windowSize.height,
+				.layers = 1
+			};
+			result = depthFramebuffer.Create(depthCi);
+		}
+		else
+		{
+			VkImageView offscreenAttachment = offscreenColor.View();
+			VkFramebufferCreateInfo offscreenCi =
+			{
+				.renderPass = offscreenRenderPass,
+				.attachmentCount = 1,
+				.pAttachments = &offscreenAttachment,
+				.width = windowSize.width,
+				.height = windowSize.height,
+				.layers = 1
+			};
+			result = offscreenFramebuffer.Create(offscreenCi);
+		}
 		if (result)
 			return result;
 
@@ -421,31 +729,72 @@ private:
 		return VK_SUCCESS;
 	}
 
-	VkResult CreateOffscreenDescriptor()
+	VkResult CreateDescriptors()
 	{
-		VkDescriptorPoolSize poolSize = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
-		VkResult result = offscreenDescriptorPool.Create(1, 1, &poolSize);
+		VkDescriptorPoolSize poolSizes[] =
+		{
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IsDepthExample(example) ? 2u : 1u },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, IsDepthExample(example) ? 1u : 0u }
+		};
+		const uint32_t poolSizeCount = IsDepthExample(example) ? 2u : 1u;
+		const uint32_t maxSets = IsDepthExample(example) ? 3u : 1u;
+		VkResult result = offscreenDescriptorPool.Create(maxSets, poolSizeCount, poolSizes);
 		if (result)
 			return result;
 		result = offscreenDescriptorPool.Allocate(offscreenDescriptorSetLayout, 1, &offscreenDescriptorSet);
 		if (result)
 			return result;
-		VkDescriptorImageInfo imageInfo =
+		VkDescriptorImageInfo colorImageInfo =
 		{
 			.sampler = offscreenSampler,
 			.imageView = offscreenColor.View(),
 			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 		};
-		VkWriteDescriptorSet write =
+		std::vector<VkWriteDescriptorSet> writes;
+		writes.push_back(
 		{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet = offscreenDescriptorSet,
 			.dstBinding = 0,
 			.descriptorCount = 1,
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.pImageInfo = &imageInfo
-		};
-		vkUpdateDescriptorSets(graphicsBase::Base().Device(), 1, &write, 0, nullptr);
+			.pImageInfo = &colorImageInfo
+		});
+
+		VkDescriptorImageInfo depthImageInfo = {};
+		VkDescriptorBufferInfo uniformInfo = {};
+		if (IsDepthExample(example))
+		{
+			if ((result = offscreenDescriptorPool.Allocate(offscreenDescriptorSetLayout, 1, &depthDescriptorSet)) ||
+				(result = offscreenDescriptorPool.Allocate(depthSceneDescriptorSetLayout, 1, &depthSceneDescriptorSet)))
+				return result;
+			depthImageInfo =
+			{
+				.sampler = offscreenSampler,
+				.imageView = depthImage.View(),
+				.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+			};
+			uniformInfo = depthUniformBuffer.DescriptorInfo(sizeof(DepthSceneUniform));
+			writes.push_back(
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = depthDescriptorSet,
+				.dstBinding = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &depthImageInfo
+			});
+			writes.push_back(
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = depthSceneDescriptorSet,
+				.dstBinding = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.pBufferInfo = &uniformInfo
+			});
+		}
+		vkUpdateDescriptorSets(graphicsBase::Base().Device(), uint32_t(writes.size()), writes.data(), 0, nullptr);
 		return VK_SUCCESS;
 	}
 
@@ -462,6 +811,81 @@ private:
 			result = CreateNoVertexPipeline(fullscreenVertexShader, fullscreenFragmentShader,
 				fullscreenPipelineLayout, screenRenderPass, 0, fullscreenPipeline, windowSize, { opaqueBlend });
 		return result;
+	}
+
+	VkResult CreateDepthPipelines()
+	{
+		VkPipelineColorBlendAttachmentState opaqueBlend =
+		{
+			.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+				VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+		};
+		VkResult result = CreateDepthScenePipeline(depthSceneVertexShader, depthSceneFragmentShader,
+			depthScenePipelineLayout, depthRenderPass, depthScenePipeline, windowSize);
+		if (!result)
+			result = CreateNoVertexPipeline(fullscreenVertexShader, fullscreenFragmentShader,
+				fullscreenPipelineLayout, screenRenderPass, 0, fullscreenPipeline, windowSize, { opaqueBlend });
+		if (!result)
+			result = CreateNoVertexPipeline(fullscreenVertexShader, depthVisualizeFragmentShader,
+				fullscreenPipelineLayout, screenRenderPass, 0, depthVisualizePipeline, windowSize, { opaqueBlend });
+		return result;
+	}
+
+	VkResult UpdateDepthUniform()
+	{
+		const float time = float(glfwGetTime());
+		DepthSceneUniform scene = {};
+		scene.view = glm::lookAt(glm::vec3(4.5f, 3.2f, 7.0f), glm::vec3(0.0f, 0.0f, -1.0f),
+			glm::vec3(0.0f, 1.0f, 0.0f));
+		scene.projection = glm::perspective(glm::radians(55.0f),
+			float(windowSize.width) / float(windowSize.height), depthNearPlane, depthFarPlane);
+		scene.projection[1][1] *= -1.0f;
+		scene.models[0] = glm::translate(glm::mat4(1.0f), glm::vec3(-1.4f, -0.2f, 0.0f)) *
+			glm::rotate(glm::mat4(1.0f), time * 0.45f, glm::vec3(0.0f, 1.0f, 0.0f));
+		scene.models[1] = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.35f, -1.7f)) *
+			glm::rotate(glm::mat4(1.0f), -time * 0.3f, glm::normalize(glm::vec3(1.0f, 1.0f, 0.0f))) *
+			glm::scale(glm::mat4(1.0f), glm::vec3(1.25f));
+		scene.models[2] = glm::translate(glm::mat4(1.0f), glm::vec3(1.25f, -0.35f, -3.0f)) *
+			glm::rotate(glm::mat4(1.0f), time * 0.25f, glm::vec3(1.0f, 0.0f, 1.0f));
+		scene.nearFarMode = { depthNearPlane, depthFarPlane,
+			example == RenderExample::DepthLinear ? 1.0f : 0.0f, 0.0f };
+		return depthUniformBuffer.Write(&scene, sizeof(scene));
+	}
+
+	void RecordDepthFrame(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+	{
+		VkClearValue depthClears[2] = {};
+		depthClears[0].color = { { 0.02f, 0.025f, 0.04f, 1.0f } };
+		depthClears[1].depthStencil = { 1.0f, 0 };
+		BeginRenderPass(commandBuffer, depthRenderPass, depthFramebuffer, windowSize, depthClears);
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, depthScenePipeline);
+		VkBuffer vertexBuffer = cubeVertexBuffer;
+		VkDeviceSize vertexOffset = 0;
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &vertexOffset);
+		vkCmdBindIndexBuffer(commandBuffer, cubeIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, depthScenePipelineLayout,
+			0, 1, &depthSceneDescriptorSet, 0, nullptr);
+		vkCmdDrawIndexed(commandBuffer, uint32_t(std::size(cubeIndices)), 3, 0, 0, 0);
+	vkCmdEndRenderPass(commandBuffer);
+
+		VkClearValue screenClear = {};
+		screenClear.color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+		screenRenderPass.CmdBegin(commandBuffer, screenFramebuffers[imageIndex], { {}, windowSize }, screenClear);
+		const bool visualizeDepth = example == RenderExample::DepthRaw || example == RenderExample::DepthLinear;
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+			visualizeDepth ? VkPipeline(depthVisualizePipeline) : VkPipeline(fullscreenPipeline));
+		VkDescriptorSet set = visualizeDepth ? depthDescriptorSet : offscreenDescriptorSet;
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, fullscreenPipelineLayout,
+			0, 1, &set, 0, nullptr);
+		if (visualizeDepth)
+		{
+			const glm::vec4 params = { depthNearPlane, depthFarPlane,
+				example == RenderExample::DepthLinear ? 1.0f : 0.0f, 0.0f };
+			vkCmdPushConstants(commandBuffer, fullscreenPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+				0, sizeof(params), &params);
+		}
+		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+		screenRenderPass.CmdEnd(commandBuffer);
 	}
 
 	void RecordOffscreenFrame(VkCommandBuffer commandBuffer, uint32_t imageIndex)
