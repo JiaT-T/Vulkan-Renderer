@@ -20,6 +20,16 @@
 - Resize: Color/depth images, views, framebuffer, descriptors, screen framebuffers, render passes, and fixed-extent pipelines are recreated by swapchain callbacks.
 - Notes: The renderer selects `D32_SFLOAT` or `D16_UNORM` only when both depth-attachment and sampled-image features are present. The image uses `DEPTH_STENCIL_ATTACHMENT|SAMPLED`, a depth-only aspect, clear value 1.0, `LESS`, depth test/write, back-face culling, and CCW front faces. Three independently transformed cubes share one indexed instanced draw. Raw depth and near/far-consistent linear depth are sampled in a separate full-screen pass.
 
+## Ch8-3 Deferred Rendering
+- Status: Implemented; user verification pending
+- Files changed: `Chapter8.cpp`, `shader/DeferredGeometry.vert.shader`, `shader/DeferredGeometry.frag.shader`, `shader/DeferredComposition.frag.shader`, `PROGRESS.md`
+- Shader: Geometry pass writes Albedo, world-space Normal, and world Position. Composition reads four input attachments, including Depth, and provides lighting/Albedo/Normal/Position debug modes.
+- Build: Not run; validation requirements were explicitly excluded by the user.
+- Runtime: Not run. Select `--example=deferred`, `--example=gbuffer-albedo`, `--example=gbuffer-normal`, or `--example=gbuffer-position`.
+- Validation: Not run.
+- Resize: All G-buffer images, depth image, views, descriptors, per-swapchain framebuffers, render pass, and pipelines are recreated.
+- Notes: A traditional render pass contains Geometry subpass 0 and Composition subpass 1. Albedo uses `R8G8B8A8_UNORM`; Normal and Position use `R16G16B16A16_SFLOAT`; Depth uses the selected depth format. Four `INPUT_ATTACHMENT` descriptors and matching `input_attachment_index` values feed the composition shader. A precise by-region dependency exposes geometry color/depth writes to input-attachment reads. Lighting is limited to ambient plus one directional diffuse term; transparency, PBR, shadows, and MSAA are intentionally outside this stage.
+
 ## Ch6-0 Modern Feature Queries
 - Status: Complete
 - Files changed: `VKStart.h`, `helper.h`, `VKBase.h`, `MyVulkan.h`, `main.cpp`, `PROGRESS.md`
