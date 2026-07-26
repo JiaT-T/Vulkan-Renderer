@@ -33,12 +33,12 @@
 - Notes: A 32-byte explicitly aligned push block is registered for the vertex stage. Its size is checked against `maxPushConstantsSize` and updated every command-buffer recording.
 
 ## Ch7-5 Uniform Buffer
-- Status: Not started
-- Files changed: None
-- Build: Not run
-- Runtime: Not run
-- Validation: Not run
-- Notes: None
+- Status: Complete
+- Files changed: `MyVulkan.h`, `main.cpp`, `shader/FirstTriangle.vert.shader`, `PROGRESS.md`
+- Build: GLSL compilation and `spirv-val` passed; Debug x64 CMake build succeeded.
+- Runtime: Model rotation visibly changed between observations while Push Constant scale/color and indexed instancing remained active.
+- Validation: Khronos Validation loaded; no ERROR or VUID was emitted during run or graceful shutdown.
+- Notes: The renderer has one frame in flight, so it owns one persistently mapped host-coherent UBO and one descriptor set. Binding 0 is a vertex-stage Uniform Buffer containing aligned Model/View/Projection matrices. The frame fence completes before the next UBO write. Vulkan projection Y is flipped explicitly.
 
 ## Ch7-6 Image Copy
 - Status: Not started

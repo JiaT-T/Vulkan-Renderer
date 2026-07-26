@@ -93,6 +93,8 @@ class bufferMemory
 private:
 	VkBuffer handle = VK_NULL_HANDLE;
 	VkDeviceMemory memory = VK_NULL_HANDLE;
+	VkDeviceSize size = 0;
+	void* mappedMemory = nullptr;
 
 	static uint32_t FindMemoryType(uint32_t memoryTypeBits, VkMemoryPropertyFlags requiredProperties)
 	{
@@ -227,6 +229,7 @@ public:
 	VkResult CreateDeviceLocal(const void* data, VkDeviceSize size, VkBufferUsageFlags usage)
 	{
 		Destroy();
+		this->size = size;
 
 		VkBuffer stagingBuffer = VK_NULL_HANDLE;
 		VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
@@ -256,8 +259,46 @@ public:
 		return result;
 	}
 
+	VkResult CreateHostVisible(VkDeviceSize size, VkBufferUsageFlags usage)
+	{
+		Destroy();
+		this->size = size;
+		VkResult result = CreateBufferAndMemory(size, usage,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			handle, memory);
+		if (!result)
+			result = vkMapMemory(graphicsBase::Base().Device(), memory, 0, size, 0, &mappedMemory);
+		if (result)
+		{
+			outStream << std::format("[ bufferMemory ] ERROR\nFailed to create a persistently mapped buffer!\nError code: {}\n", string_VkResult(result));
+			Destroy();
+		}
+		return result;
+	}
+
+	VkResult Write(const void* data, VkDeviceSize dataSize, VkDeviceSize offset = 0)
+	{
+		if (!mappedMemory || offset + dataSize > size)
+		{
+			outStream << "[ bufferMemory ] ERROR\nInvalid host-visible buffer write!\n";
+			return VK_ERROR_MEMORY_MAP_FAILED;
+		}
+		std::memcpy(static_cast<uint8_t*>(mappedMemory) + offset, data, size_t(dataSize));
+		return VK_SUCCESS;
+	}
+
+	VkDescriptorBufferInfo DescriptorInfo(VkDeviceSize range = VK_WHOLE_SIZE, VkDeviceSize offset = 0) const
+	{
+		return { handle, offset, range };
+	}
+
 	void Destroy()
 	{
+		if (mappedMemory)
+		{
+			vkUnmapMemory(graphicsBase::Base().Device(), memory);
+			mappedMemory = nullptr;
+		}
 		if (handle)
 		{
 			vkDestroyBuffer(graphicsBase::Base().Device(), handle, nullptr);
@@ -268,6 +309,7 @@ public:
 			vkFreeMemory(graphicsBase::Base().Device(), memory, nullptr);
 			memory = VK_NULL_HANDLE;
 		}
+		size = 0;
 	}
 };
 
@@ -303,6 +345,88 @@ public:
 	void Destroy()
 	{
 		DestroyHandleBy(vkDestroyPipelineLayout);
+	}
+};
+
+class descriptorSetLayout
+{
+private:
+	VkDescriptorSetLayout handle = VK_NULL_HANDLE;
+
+public:
+	descriptorSetLayout() = default;
+	descriptorSetLayout(const descriptorSetLayout&) = delete;
+	descriptorSetLayout& operator=(const descriptorSetLayout&) = delete;
+	~descriptorSetLayout() { Destroy(); }
+
+	DefineHandleTypeOperator;
+	DefineAddressFunction;
+
+	VkResult Create(VkDescriptorSetLayoutCreateInfo& createInfo)
+	{
+		Destroy();
+		createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+		if (result)
+			outStream << std::format("[ descriptorSetLayout ] ERROR\nFailed to create a descriptor set layout!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+
+	void Destroy()
+	{
+		DestroyHandleBy(vkDestroyDescriptorSetLayout);
+	}
+};
+
+class descriptorPool
+{
+private:
+	VkDescriptorPool handle = VK_NULL_HANDLE;
+
+public:
+	descriptorPool() = default;
+	descriptorPool(const descriptorPool&) = delete;
+	descriptorPool& operator=(const descriptorPool&) = delete;
+	~descriptorPool() { Destroy(); }
+
+	DefineHandleTypeOperator;
+	DefineAddressFunction;
+
+	VkResult Create(uint32_t maxSets, uint32_t poolSizeCount, const VkDescriptorPoolSize* poolSizes)
+	{
+		Destroy();
+		VkDescriptorPoolCreateInfo createInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.maxSets = maxSets,
+			.poolSizeCount = poolSizeCount,
+			.pPoolSizes = poolSizes
+		};
+		VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+		if (result)
+			outStream << std::format("[ descriptorPool ] ERROR\nFailed to create a descriptor pool!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+
+	VkResult Allocate(VkDescriptorSetLayout layout, uint32_t count, VkDescriptorSet* descriptorSets) const
+	{
+		std::vector<VkDescriptorSetLayout> layouts(count, layout);
+		VkDescriptorSetAllocateInfo allocateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = handle,
+			.descriptorSetCount = count,
+			.pSetLayouts = layouts.data()
+		};
+		VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, descriptorSets);
+		if (result)
+			outStream << std::format("[ descriptorPool ] ERROR\nFailed to allocate descriptor sets!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+
+	void Destroy()
+	{
+		DestroyHandleBy(vkDestroyDescriptorPool);
 	}
 };
 

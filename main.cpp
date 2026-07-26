@@ -2,6 +2,7 @@
 #include "MyVulkan.h"
 #include <cstddef>
 #include <cmath>
+#include <array>
 
 using namespace vulkan;
 using namespace easyVulkan;
@@ -29,6 +30,15 @@ struct alignas(16) PushConstantData
 
 static_assert(sizeof(PushConstantData) == 32);
 
+struct alignas(16) UniformData
+{
+	alignas(16) glm::mat4 model;
+	alignas(16) glm::mat4 view;
+	alignas(16) glm::mat4 projection;
+};
+
+static_assert(sizeof(UniformData) == sizeof(glm::mat4) * 3);
+
 const Vertex vertices_rectangle[] =
 {
 	{ { -0.2f, -0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
@@ -53,6 +63,7 @@ const InstanceData instances_rectangle[] =
 
 // VkPipelineLayout: 三角形管线使用的布局，本节不包含描述符集和 push constant。
 pipelineLayout pipelineLayout_triangle;
+descriptorSetLayout descriptorSetLayout_scene;
 // VkPipeline: 三角形绘制使用的图形管线。
 pipeline pipeline_triangle;
 
@@ -75,8 +86,24 @@ void CreateLayout()
 		.offset = 0,
 		.size = sizeof(PushConstantData)
 	};
+	VkDescriptorSetLayoutBinding uniformBinding =
+	{
+		.binding = 0,
+		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.descriptorCount = 1,
+		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+	};
+	VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo =
+	{
+		.bindingCount = 1,
+		.pBindings = &uniformBinding
+	};
+	if (descriptorSetLayout_scene.Create(descriptorSetLayoutCreateInfo))
+		abort();
 	VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo =
 	{
+		.setLayoutCount = 1,
+		.pSetLayouts = descriptorSetLayout_scene.Address(),
 		.pushConstantRangeCount = 1,
 		.pPushConstantRanges = &pushConstantRange
 	};
@@ -84,7 +111,10 @@ void CreateLayout()
 	static bool callbackAdded = false;
 	if (!callbackAdded)
 	{
-		graphicsBase::Base().AddCallback_DestroyDevice([] { pipelineLayout_triangle.Destroy(); });
+		graphicsBase::Base().AddCallback_DestroyDevice([] {
+			pipelineLayout_triangle.Destroy();
+			descriptorSetLayout_scene.Destroy();
+		});
 		callbackAdded = true;
 	}
 }
@@ -199,6 +229,34 @@ int Run()
 	if (instanceBuffer_rectangles.CreateDeviceLocal(instances_rectangle, sizeof(instances_rectangle), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT))
 		return -1;
 
+	constexpr uint32_t maxFramesInFlight = 1;
+	std::array<bufferMemory, maxFramesInFlight> uniformBuffers;
+	for (bufferMemory& uniformBuffer : uniformBuffers)
+		if (uniformBuffer.CreateHostVisible(sizeof(UniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
+			return -1;
+
+	VkDescriptorPoolSize poolSize = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxFramesInFlight };
+	descriptorPool descriptorPool_scene;
+	if (descriptorPool_scene.Create(maxFramesInFlight, 1, &poolSize))
+		return -1;
+	std::array<VkDescriptorSet, maxFramesInFlight> descriptorSets_scene = {};
+	if (descriptorPool_scene.Allocate(descriptorSetLayout_scene, maxFramesInFlight, descriptorSets_scene.data()))
+		return -1;
+	for (uint32_t i = 0; i < maxFramesInFlight; i++)
+	{
+		VkDescriptorBufferInfo bufferInfo = uniformBuffers[i].DescriptorInfo(sizeof(UniformData));
+		VkWriteDescriptorSet descriptorWrite =
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = descriptorSets_scene[i],
+			.dstBinding = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.pBufferInfo = &bufferInfo
+		};
+		vkUpdateDescriptorSets(graphicsBase::Base().Device(), 1, &descriptorWrite, 0, nullptr);
+	}
+
 	// VkFence: 渲染提交完成后由 GPU 置位，CPU 在循环末尾等待并重置它。
 	fence fence;
 	// VkSemaphore: 获取交换链图像成功后置位，图形队列提交前等待它。
@@ -229,6 +287,17 @@ int Run()
 		// 获取当前可写入的交换链图像索引，并在图像可用时置位 semaphore_imageIsAvailable。
 		graphicsBase::Base().SwapImage(semaphore_imageIsAvailable);
 		auto imageIndex = graphicsBase::Base().CurrentImageIndex();
+		constexpr uint32_t frameIndex = 0;
+		const float time = float(glfwGetTime());
+		UniformData uniformData =
+		{
+			.model = glm::rotate(glm::mat4(1.0f), time * 0.2f, glm::vec3(0.0f, 0.0f, 1.0f)),
+			.view = glm::mat4(1.0f),
+			.projection = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f)
+		};
+		uniformData.projection[1][1] *= -1.0f;
+		if (uniformBuffers[frameIndex].Write(&uniformData, sizeof(uniformData)))
+			return -1;
 
 		// 开始录制当前帧命令。
 		commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
@@ -241,7 +310,6 @@ int Run()
 		VkDeviceSize vertexBufferOffsets[] = { 0, 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 2, vertexBuffers, vertexBufferOffsets);
 		vkCmdBindIndexBuffer(commandBuffer, indexBuffer_rectangle, 0, VK_INDEX_TYPE_UINT16);
-		const float time = float(glfwGetTime());
 		const float pulse = 0.8f + 0.2f * (0.5f + 0.5f * std::sin(time * 2.0f));
 		PushConstantData pushConstantData =
 		{
@@ -254,6 +322,8 @@ int Run()
 		};
 		vkCmdPushConstants(commandBuffer, pipelineLayout_triangle, VK_SHADER_STAGE_VERTEX_BIT,
 			0, sizeof(pushConstantData), &pushConstantData);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_triangle,
+			0, 1, &descriptorSets_scene[frameIndex], 0, nullptr);
 		vkCmdDrawIndexed(commandBuffer, uint32_t(std::size(indices_rectangle)), uint32_t(std::size(instances_rectangle)), 0, 0, 0);
 
 		renderPass.CmdEnd(commandBuffer);
