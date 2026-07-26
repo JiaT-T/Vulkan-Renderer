@@ -9,12 +9,12 @@
 - Notes: Vertex data uploads through a host-visible coherent staging buffer. Buffer is destroyed before its memory. Full Device/Surface/Instance shutdown was added. Minimize kept the process alive without errors, but the automation interface could not reacquire the minimized window; minimize/restore remains a final integrated-test item.
 
 ## Ch7-2 Index Buffer
-- Status: Not started
-- Files changed: None
-- Build: Not run
-- Runtime: Not run
-- Validation: Not run
-- Notes: None
+- Status: Complete
+- Files changed: `MyVulkan.h`, `main.cpp`, `PROGRESS.md`
+- Build: GLSL recompiled with `glslc`; SPIR-V validation passed; Debug x64 CMake build succeeded.
+- Runtime: Four unique vertices and six `uint16_t` indices rendered one interpolated rectangle through `vkCmdDrawIndexed`.
+- Validation: Khronos Validation loaded; no ERROR or VUID was emitted during run or graceful shutdown.
+- Notes: Vertex and index data both use staging uploads into separate device-local buffers. CPU index type, bind type, and draw count are consistent.
 
 ## Ch7-3 Instancing
 - Status: Not started

@@ -88,7 +88,7 @@ public:
 	}
 };
 
-class vertexBuffer
+class bufferMemory
 {
 private:
 	VkBuffer handle = VK_NULL_HANDLE;
@@ -117,7 +117,7 @@ private:
 		VkResult result = vkCreateBuffer(graphicsBase::Base().Device(), &bufferCreateInfo, nullptr, &buffer);
 		if (result)
 		{
-			outStream << std::format("[ vertexBuffer ] ERROR\nFailed to create a buffer!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ bufferMemory ] ERROR\nFailed to create a buffer!\nError code: {}\n", string_VkResult(result));
 			return result;
 		}
 
@@ -126,7 +126,7 @@ private:
 		const uint32_t memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, memoryProperties);
 		if (memoryTypeIndex == UINT32_MAX)
 		{
-			outStream << "[ vertexBuffer ] ERROR\nFailed to find a suitable memory type!\n";
+			outStream << "[ bufferMemory ] ERROR\nFailed to find a suitable memory type!\n";
 			vkDestroyBuffer(graphicsBase::Base().Device(), buffer, nullptr);
 			buffer = VK_NULL_HANDLE;
 			return VK_ERROR_FEATURE_NOT_PRESENT;
@@ -141,7 +141,7 @@ private:
 		result = vkAllocateMemory(graphicsBase::Base().Device(), &allocateInfo, nullptr, &deviceMemory);
 		if (result)
 		{
-			outStream << std::format("[ vertexBuffer ] ERROR\nFailed to allocate buffer memory!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ bufferMemory ] ERROR\nFailed to allocate buffer memory!\nError code: {}\n", string_VkResult(result));
 			vkDestroyBuffer(graphicsBase::Base().Device(), buffer, nullptr);
 			buffer = VK_NULL_HANDLE;
 			return result;
@@ -150,7 +150,7 @@ private:
 		result = vkBindBufferMemory(graphicsBase::Base().Device(), buffer, deviceMemory, 0);
 		if (result)
 		{
-			outStream << std::format("[ vertexBuffer ] ERROR\nFailed to bind buffer memory!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ bufferMemory ] ERROR\nFailed to bind buffer memory!\nError code: {}\n", string_VkResult(result));
 			vkDestroyBuffer(graphicsBase::Base().Device(), buffer, nullptr);
 			vkFreeMemory(graphicsBase::Base().Device(), deviceMemory, nullptr);
 			buffer = VK_NULL_HANDLE;
@@ -211,20 +211,20 @@ private:
 
 		vkDestroyCommandPool(graphicsBase::Base().Device(), copyCommandPool, nullptr);
 		if (result)
-			outStream << std::format("[ vertexBuffer ] ERROR\nFailed to transfer vertex data!\nError code: {}\n", string_VkResult(result));
+			outStream << std::format("[ bufferMemory ] ERROR\nFailed to transfer buffer data!\nError code: {}\n", string_VkResult(result));
 		return result;
 	}
 
 public:
-	vertexBuffer() = default;
-	vertexBuffer(const vertexBuffer&) = delete;
-	vertexBuffer& operator=(const vertexBuffer&) = delete;
-	~vertexBuffer() { Destroy(); }
+	bufferMemory() = default;
+	bufferMemory(const bufferMemory&) = delete;
+	bufferMemory& operator=(const bufferMemory&) = delete;
+	~bufferMemory() { Destroy(); }
 
 	DefineHandleTypeOperator;
 	DefineAddressFunction;
 
-	VkResult Create(const void* data, VkDeviceSize size)
+	VkResult CreateDeviceLocal(const void* data, VkDeviceSize size, VkBufferUsageFlags usage)
 	{
 		Destroy();
 
@@ -242,7 +242,7 @@ public:
 		{
 			std::memcpy(mappedMemory, data, size_t(size));
 			vkUnmapMemory(graphicsBase::Base().Device(), stagingMemory);
-			result = CreateBufferAndMemory(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			result = CreateBufferAndMemory(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, handle, memory);
 		}
 		if (!result)

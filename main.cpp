@@ -13,11 +13,18 @@ struct Vertex
 	glm::vec4 color;
 };
 
-const Vertex vertices_triangle[] =
+const Vertex vertices_rectangle[] =
 {
-	{ {  0.0f, -0.5f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+	{ { -0.5f, -0.5f }, { 1.0f, 1.0f, 0.0f, 1.0f } },
+	{ {  0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
 	{ { -0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
 	{ {  0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
+};
+
+const uint16_t indices_rectangle[] =
+{
+	0, 1, 2,
+	1, 3, 2
 };
 
 // VkPipelineLayout: 三角形管线使用的布局，本节不包含描述符集和 push constant。
@@ -124,8 +131,11 @@ int Run()
 	const auto& [renderPass, framebuffers] = RenderPassAndFramebuffers();
 	CreateLayout();
 	CreatePipeline();
-	vertexBuffer vertexBuffer_triangle;
-	if (vertexBuffer_triangle.Create(vertices_triangle, sizeof(vertices_triangle)))
+	bufferMemory vertexBuffer_rectangle;
+	if (vertexBuffer_rectangle.CreateDeviceLocal(vertices_rectangle, sizeof(vertices_rectangle), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT))
+		return -1;
+	bufferMemory indexBuffer_rectangle;
+	if (indexBuffer_rectangle.CreateDeviceLocal(indices_rectangle, sizeof(indices_rectangle), VK_BUFFER_USAGE_INDEX_BUFFER_BIT))
 		return -1;
 
 	// VkFence: 渲染提交完成后由 GPU 置位，CPU 在循环末尾等待并重置它。
@@ -167,8 +177,9 @@ int Run()
 		// VkPipeline: 绑定图形管线后，后续 draw 命令使用该管线状态执行。
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_triangle);
 		VkDeviceSize vertexBufferOffset = 0;
-		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffer_triangle.Address(), &vertexBufferOffset);
-		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffer_rectangle.Address(), &vertexBufferOffset);
+		vkCmdBindIndexBuffer(commandBuffer, indexBuffer_rectangle, 0, VK_INDEX_TYPE_UINT16);
+		vkCmdDrawIndexed(commandBuffer, uint32_t(std::size(indices_rectangle)), 1, 0, 0, 0);
 
 		renderPass.CmdEnd(commandBuffer);
 		commandBuffer.End();
