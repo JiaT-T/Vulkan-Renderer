@@ -14,6 +14,7 @@ struct Vertex
 {
 	glm::vec2 position;
 	glm::vec4 color;
+	glm::vec2 texCoord;
 };
 
 struct InstanceData
@@ -42,10 +43,10 @@ static_assert(sizeof(UniformData) == sizeof(glm::mat4) * 3);
 
 const Vertex vertices_rectangle[] =
 {
-	{ { -0.2f, -0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	{ {  0.2f, -0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	{ { -0.2f,  0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	{ {  0.2f,  0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f } }
+	{ { -0.2f, -0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f } },
+	{ {  0.2f, -0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f } },
+	{ { -0.2f,  0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f } },
+	{ {  0.2f,  0.2f }, { 1.0f, 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } }
 };
 
 const uint16_t indices_rectangle[] =
@@ -62,10 +63,10 @@ const InstanceData instances_rectangle[] =
 	{ {  0.45f,  0.45f }, { 1.0f, 0.85f, 0.2f, 1.0f } }
 };
 
-// VkPipelineLayout: 三角形管线使用的布局，本节不包含描述符集和 push constant。
+// VkPipelineLayout: 组合场景描述符集布局与顶点阶段 Push Constant 范围。
 pipelineLayout pipelineLayout_triangle;
 descriptorSetLayout descriptorSetLayout_scene;
-// VkPipeline: 三角形绘制使用的图形管线。
+// VkPipeline: 带纹理的索引实例化绘制所使用的图形管线。
 pipeline pipeline_triangle;
 
 const auto& RenderPassAndFramebuffers()
@@ -87,17 +88,25 @@ void CreateLayout()
 		.offset = 0,
 		.size = sizeof(PushConstantData)
 	};
-	VkDescriptorSetLayoutBinding uniformBinding =
+	VkDescriptorSetLayoutBinding descriptorBindings[] =
 	{
-		.binding = 0,
-		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-		.descriptorCount = 1,
-		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+		{
+			.binding = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+		},
+		{
+			.binding = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+		}
 	};
 	VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo =
 	{
-		.bindingCount = 1,
-		.pBindings = &uniformBinding
+		.bindingCount = uint32_t(std::size(descriptorBindings)),
+		.pBindings = descriptorBindings
 	};
 	if (descriptorSetLayout_scene.Create(descriptorSetLayoutCreateInfo))
 		abort();
@@ -165,13 +174,20 @@ void CreatePipeline()
 		pipelineCiPack.vertexInputAttributes.push_back(
 			{
 				.location = 2,
+				.binding = 0,
+				.format = VK_FORMAT_R32G32_SFLOAT,
+				.offset = offsetof(Vertex, texCoord)
+			});
+		pipelineCiPack.vertexInputAttributes.push_back(
+			{
+				.location = 3,
 				.binding = 1,
 				.format = VK_FORMAT_R32G32_SFLOAT,
 				.offset = offsetof(InstanceData, offset)
 			});
 		pipelineCiPack.vertexInputAttributes.push_back(
 			{
-				.location = 3,
+				.location = 4,
 				.binding = 1,
 				.format = VK_FORMAT_R32G32B32A32_SFLOAT,
 				.offset = offsetof(InstanceData, color)
@@ -321,7 +337,7 @@ int Run()
 {
 	if (ShowBootImage("textures/viking_room.png"))
 		return -1;
-	const double bootImageEndTime = glfwGetTime() + 8.0;
+	const double bootImageEndTime = glfwGetTime() + 2.0;
 	while (!glfwWindowShouldClose(pWindow) && glfwGetTime() < bootImageEndTime)
 	{
 		glfwPollEvents();
@@ -346,10 +362,17 @@ int Run()
 	for (bufferMemory& uniformBuffer : uniformBuffers)
 		if (uniformBuffer.CreateHostVisible(sizeof(UniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
 			return -1;
+	texture2d texture_scene;
+	if (texture_scene.Create("textures/uv_orientation_test.png"))
+		return -1;
 
-	VkDescriptorPoolSize poolSize = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxFramesInFlight };
+	VkDescriptorPoolSize poolSizes[] =
+	{
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxFramesInFlight },
+		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, maxFramesInFlight }
+	};
 	descriptorPool descriptorPool_scene;
-	if (descriptorPool_scene.Create(maxFramesInFlight, 1, &poolSize))
+	if (descriptorPool_scene.Create(maxFramesInFlight, uint32_t(std::size(poolSizes)), poolSizes))
 		return -1;
 	std::array<VkDescriptorSet, maxFramesInFlight> descriptorSets_scene = {};
 	if (descriptorPool_scene.Allocate(descriptorSetLayout_scene, maxFramesInFlight, descriptorSets_scene.data()))
@@ -357,16 +380,27 @@ int Run()
 	for (uint32_t i = 0; i < maxFramesInFlight; i++)
 	{
 		VkDescriptorBufferInfo bufferInfo = uniformBuffers[i].DescriptorInfo(sizeof(UniformData));
-		VkWriteDescriptorSet descriptorWrite =
+		VkDescriptorImageInfo imageInfo = texture_scene.DescriptorInfo();
+		VkWriteDescriptorSet descriptorWrites[] =
 		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descriptorSets_scene[i],
-			.dstBinding = 0,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.pBufferInfo = &bufferInfo
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = descriptorSets_scene[i],
+				.dstBinding = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.pBufferInfo = &bufferInfo
+			},
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = descriptorSets_scene[i],
+				.dstBinding = 1,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &imageInfo
+			}
 		};
-		vkUpdateDescriptorSets(graphicsBase::Base().Device(), 1, &descriptorWrite, 0, nullptr);
+		vkUpdateDescriptorSets(graphicsBase::Base().Device(), uint32_t(std::size(descriptorWrites)), descriptorWrites, 0, nullptr);
 	}
 
 	// VkFence: 渲染提交完成后由 GPU 置位，CPU 在循环末尾等待并重置它。
@@ -403,7 +437,7 @@ int Run()
 		const float time = float(glfwGetTime());
 		UniformData uniformData =
 		{
-			.model = glm::rotate(glm::mat4(1.0f), time * 0.2f, glm::vec3(0.0f, 0.0f, 1.0f)),
+			.model = glm::rotate(glm::mat4(1.0f), 0.15f * std::sin(time * 0.5f), glm::vec3(0.0f, 0.0f, 1.0f)),
 			.view = glm::mat4(1.0f),
 			.projection = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f)
 		};

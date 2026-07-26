@@ -1,6 +1,7 @@
 #pragma once
 #include "VKBase.h"
 #include <cstring>
+#include <cmath>
 
 using namespace vulkan;
 
@@ -496,6 +497,156 @@ inline void CmdBlitImage(VkCommandBuffer commandBuffer, VkImage source, VkImage 
 }
 }
 
+class texture2d
+{
+private:
+	imageMemory image;
+	VkSampler sampler = VK_NULL_HANDLE;
+
+public:
+	texture2d() = default;
+	texture2d(const texture2d&) = delete;
+	texture2d& operator=(const texture2d&) = delete;
+	~texture2d() { Destroy(); }
+
+	VkImageView View() const { return image.View(); }
+	VkSampler Sampler() const { return sampler; }
+	uint32_t MipLevels() const { return image.MipLevels(); }
+
+	VkDescriptorImageInfo DescriptorInfo() const
+	{
+		return { sampler, image.View(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+	}
+
+	VkResult Create(const char* filepath, VkFormat format = VK_FORMAT_R8G8B8A8_UNORM)
+	{
+		Destroy();
+		int width = 0;
+		int height = 0;
+		int channelCount = 0;
+		stbi_uc* pixels = stbi_load(filepath, &width, &height, &channelCount, STBI_rgb_alpha);
+		if (!pixels || width <= 0 || height <= 0)
+		{
+			outStream << std::format("[ texture2d ] ERROR\nFailed to load texture: {}\n", filepath);
+			if (pixels)
+				stbi_image_free(pixels);
+			return VK_ERROR_INITIALIZATION_FAILED;
+		}
+
+		VkFormatProperties formatProperties;
+		vkGetPhysicalDeviceFormatProperties(graphicsBase::Base().PhysicalDevice(), format, &formatProperties);
+		const VkFormatFeatureFlags requiredFeatures = VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+			VK_FORMAT_FEATURE_BLIT_DST_BIT |
+			VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+			VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+		if ((formatProperties.optimalTilingFeatures & requiredFeatures) != requiredFeatures)
+		{
+			outStream << "[ texture2d ] ERROR\nTexture format does not support sampled linear mipmap blits!\n";
+			stbi_image_free(pixels);
+			return VK_ERROR_FORMAT_NOT_SUPPORTED;
+		}
+
+		const VkDeviceSize imageSize = VkDeviceSize(width) * VkDeviceSize(height) * STBI_rgb_alpha;
+		bufferMemory stagingBuffer;
+		VkResult result = stagingBuffer.CreateHostVisible(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+		if (!result)
+			result = stagingBuffer.Write(pixels, imageSize);
+		stbi_image_free(pixels);
+		if (result)
+			return result;
+
+		const uint32_t mipLevels = uint32_t(std::floor(std::log2(std::max(width, height)))) + 1;
+		const VkExtent3D extent = { uint32_t(width), uint32_t(height), 1 };
+		result = image.Create(extent, mipLevels, format, VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		if (!result)
+			result = ExecuteGraphicsCommands([&](VkCommandBuffer commandBuffer) {
+				imageOperation::CmdTransitionLayout(commandBuffer, image,
+					VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+					VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+					0, VK_ACCESS_TRANSFER_WRITE_BIT,
+					{ VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, 1 });
+				imageOperation::CmdCopyBufferToImage(commandBuffer, stagingBuffer, image, extent);
+
+				int32_t mipWidth = width;
+				int32_t mipHeight = height;
+				for (uint32_t mipLevel = 1; mipLevel < mipLevels; mipLevel++)
+				{
+					imageOperation::CmdTransitionLayout(commandBuffer, image,
+						VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+						VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+						VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+						{ VK_IMAGE_ASPECT_COLOR_BIT, mipLevel - 1, 1, 0, 1 });
+					const int32_t nextWidth = std::max(mipWidth / 2, 1);
+					const int32_t nextHeight = std::max(mipHeight / 2, 1);
+					imageOperation::CmdBlitImage(commandBuffer, image, image,
+						{ mipWidth, mipHeight, 1 }, { nextWidth, nextHeight, 1 },
+						VK_FILTER_LINEAR, mipLevel - 1, mipLevel);
+					imageOperation::CmdTransitionLayout(commandBuffer, image,
+						VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+						VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+						VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT,
+						{ VK_IMAGE_ASPECT_COLOR_BIT, mipLevel - 1, 1, 0, 1 });
+					mipWidth = nextWidth;
+					mipHeight = nextHeight;
+				}
+				imageOperation::CmdTransitionLayout(commandBuffer, image,
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+					{ VK_IMAGE_ASPECT_COLOR_BIT, mipLevels - 1, 1, 0, 1 });
+			});
+		if (!result)
+			result = image.CreateView();
+		if (result)
+		{
+			Destroy();
+			return result;
+		}
+
+		VkPhysicalDeviceFeatures features;
+		vkGetPhysicalDeviceFeatures(graphicsBase::Base().PhysicalDevice(), &features);
+		VkSamplerCreateInfo samplerCreateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.anisotropyEnable = features.samplerAnisotropy,
+			.maxAnisotropy = features.samplerAnisotropy
+				? graphicsBase::Base().PhysicalDeviceProperties().limits.maxSamplerAnisotropy
+				: 1.0f,
+			.compareEnable = VK_FALSE,
+			.compareOp = VK_COMPARE_OP_ALWAYS,
+			.minLod = 0.0f,
+			.maxLod = float(mipLevels),
+			.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+			.unnormalizedCoordinates = VK_FALSE
+		};
+		result = vkCreateSampler(graphicsBase::Base().Device(), &samplerCreateInfo, nullptr, &sampler);
+		if (result)
+		{
+			outStream << std::format("[ texture2d ] ERROR\nFailed to create a sampler!\nError code: {}\n", string_VkResult(result));
+			Destroy();
+		}
+		return result;
+	}
+
+	void Destroy()
+	{
+		if (sampler)
+		{
+			vkDestroySampler(graphicsBase::Base().Device(), sampler, nullptr);
+			sampler = VK_NULL_HANDLE;
+		}
+		image.Destroy();
+	}
+};
+
 class pipelineLayout
 {
 private:
@@ -517,7 +668,7 @@ public:
 	{
 		Destroy();
 
-		// VkPipelineLayoutCreateInfo: 本节不使用描述符和 push constant，因此保持空布局。
+		// VkPipelineLayoutCreateInfo: 汇总描述符集布局和 Push Constant 范围。
 		createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		VkResult result = vkCreatePipelineLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
 		if (result)

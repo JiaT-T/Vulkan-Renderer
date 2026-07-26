@@ -49,9 +49,9 @@
 - Notes: Source and destination format features are checked before linear blit. Barriers use TOP_OF_PIPE→TRANSFER for undefined destinations, TRANSFER→TRANSFER for copy-to-blit visibility, and TRANSFER→BOTTOM_OF_PIPE before present. The image view is destroyed before its image, and the image before its memory.
 
 ## Ch7-7 Texture
-- Status: Not started
-- Files changed: None
-- Build: Not run
-- Runtime: Not run
-- Validation: Not run
-- Notes: None
+- Status: Implemented; user verification pending
+- Files changed: `assets/uv_orientation_test.png`, `CMakeLists.txt`, `MyVulkan.h`, `main.cpp`, `shader/FirstTriangle.vert.shader`, `shader/FirstTriangle.frag.shader`, `PROGRESS.md`
+- Build: Not run after this stage, per user instruction.
+- Runtime: Not run after this stage, per user instruction.
+- Validation: Not run after this stage, per user instruction.
+- Notes: Vertex data now includes UVs. Descriptor set binding 0 remains the UBO and binding 1 is a Combined Image Sampler. `texture2d` loads RGBA8 through stb, uploads through a staging buffer, creates a device-local sampled image, computes 11 mip levels for the 1024x1024 orientation chart, checks linear-blit format support, generates each mip with explicit per-level barriers, creates an all-mip image view, and creates a linear mipmapped sampler with feature-gated anisotropy. The final shader multiplies sampled texture color by instance and Push Constant tint. Ch7-6 boot-image blit remains in the startup path.
