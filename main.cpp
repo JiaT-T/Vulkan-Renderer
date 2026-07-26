@@ -157,7 +157,22 @@ void CreatePipeline()
 	auto Create = [] {
 		graphicsPipelineCreateInfoPack pipelineCiPack;
 		pipelineCiPack.createInfo.layout = pipelineLayout_triangle;
-		pipelineCiPack.createInfo.renderPass = ActiveRenderPass();
+		VkFormat colorAttachmentFormat = graphicsBase::Base().SwapchainCreateInfo().imageFormat;
+		VkPipelineRenderingCreateInfo pipelineRenderingCreateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+			.colorAttachmentCount = 1,
+			.pColorAttachmentFormats = &colorAttachmentFormat,
+			.depthAttachmentFormat = VK_FORMAT_UNDEFINED,
+			.stencilAttachmentFormat = VK_FORMAT_UNDEFINED
+		};
+		if (graphicsBase::Base().ActiveRenderMode() == RenderMode::DynamicRendering)
+		{
+			pipelineCiPack.createInfo.pNext = &pipelineRenderingCreateInfo;
+			pipelineCiPack.createInfo.renderPass = VK_NULL_HANDLE;
+		}
+		else
+			pipelineCiPack.createInfo.renderPass = ActiveRenderPass();
 		pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 		pipelineCiPack.vertexInputBindings.push_back(
 			{
@@ -362,9 +377,11 @@ int Run(bool selfTest)
 
 	const bool useImagelessFramebuffer =
 		graphicsBase::Base().ActiveRenderMode() == RenderMode::ImagelessFramebuffer;
+	const bool useDynamicRendering =
+		graphicsBase::Base().ActiveRenderMode() == RenderMode::DynamicRendering;
 	if (useImagelessFramebuffer)
 		(void)ImagelessRenderPassAndFramebuffer();
-	else
+	else if (!useDynamicRendering)
 		(void)LegacyRenderPassAndFramebuffers();
 	CreateLayout();
 	CreatePipeline();
@@ -512,7 +529,39 @@ int Run(bool selfTest)
 		// 开始录制当前帧命令。
 		commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 		// VkRenderPass + VkFramebuffer: 指定本帧渲染时使用的渲染通道和当前交换链图像对应的帧缓冲。
-		if (useImagelessFramebuffer)
+		if (useDynamicRendering)
+		{
+			// UNDEFINED 允许丢弃交换链图像旧内容；本帧会先 clear，因此无需跟踪先前的 PRESENT 布局。
+			const VkImageSubresourceRange colorRange =
+				{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, graphicsBase::Base().SwapchainCreateInfo().imageArrayLayers };
+			imageOperation::CmdTransitionLayout(commandBuffer, graphicsBase::Base().SwapchainImage(imageIndex),
+				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, colorRange);
+
+			VkRenderingAttachmentInfo colorAttachmentInfo =
+			{
+				.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+				.imageView = graphicsBase::Base().SwapchainImageView(imageIndex),
+				.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+				.clearValue = clearColor
+			};
+			VkRenderingInfo renderingInfo =
+			{
+				.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+				.renderArea = { {}, windowSize },
+				.layerCount = graphicsBase::Base().SwapchainCreateInfo().imageArrayLayers,
+				.colorAttachmentCount = 1,
+				.pColorAttachments = &colorAttachmentInfo,
+				.pDepthAttachment = nullptr,
+				.pStencilAttachment = nullptr
+			};
+			if (graphicsBase::Base().CmdBeginRendering(commandBuffer, renderingInfo))
+				return -1;
+		}
+		else if (useImagelessFramebuffer)
 		{
 			const auto& rpwf = ImagelessRenderPassAndFramebuffer();
 			rpwf.renderPass.CmdBeginImageless(commandBuffer, rpwf.framebuffer,
@@ -546,7 +595,17 @@ int Run(bool selfTest)
 			0, 1, &descriptorSets_scene[frameIndex], 0, nullptr);
 		vkCmdDrawIndexed(commandBuffer, uint32_t(std::size(indices_rectangle)), uint32_t(std::size(instances_rectangle)), 0, 0, 0);
 
-		if (useImagelessFramebuffer)
+		if (useDynamicRendering)
+		{
+			if (graphicsBase::Base().CmdEndRendering(commandBuffer))
+				return -1;
+			imageOperation::CmdTransitionLayout(commandBuffer, graphicsBase::Base().SwapchainImage(imageIndex),
+				VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+				VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0,
+				{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, graphicsBase::Base().SwapchainCreateInfo().imageArrayLayers });
+		}
+		else if (useImagelessFramebuffer)
 			ImagelessRenderPassAndFramebuffer().renderPass.CmdEnd(commandBuffer);
 		else
 			LegacyRenderPassAndFramebuffers().renderPass.CmdEnd(commandBuffer);
@@ -574,7 +633,7 @@ int Run(bool selfTest)
 int main(int argc, char* argv[])
 {
 	bool selfTest = false;
-	RenderMode requestedRenderMode = RenderMode::LegacyRenderPass;
+	RenderMode requestedRenderMode = RenderMode::DynamicRendering;
 	for (int i = 1; i < argc; i++)
 	{
 		const std::string_view argument = argv[i];
@@ -584,6 +643,8 @@ int main(int argc, char* argv[])
 			requestedRenderMode = RenderMode::LegacyRenderPass;
 		else if (argument == "--mode=imageless")
 			requestedRenderMode = RenderMode::ImagelessFramebuffer;
+		else if (argument == "--mode=dynamic")
+			requestedRenderMode = RenderMode::DynamicRendering;
 	}
 	graphicsBase::Base().RequestRenderMode(requestedRenderMode);
 

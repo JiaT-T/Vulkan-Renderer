@@ -20,6 +20,18 @@
 - Swapchain lifecycle: The single imageless framebuffer is destroyed before old swapchain image views and recreated from the new format requirements, extent, usage, and layer count. The render pass remains device-lifetime in this project because swapchain recreation retains the selected surface format.
 - Build/runtime/validation: Not run after this section per the latest user instruction; to be verified by the user.
 
+## Ch6-2 Dynamic Rendering
+- Status: Implemented; user verification pending
+- Files changed: `VKBase.h`, `main.cpp`, `PROGRESS.md`, `docs/EasyVulkan_Chapter6_Summary.md`
+- Run mode: Dynamic Rendering is the default. `--mode=dynamic`, `--mode=imageless`, and `--mode=legacy` explicitly select the requested path; unsupported new modes fall back to `LegacyRenderPass` with a log message.
+- Core/extension selection: Vulkan 1.3+ uses `VkPhysicalDeviceVulkan13Features::dynamicRendering`. Vulkan 1.2 checks and enables `VK_KHR_dynamic_rendering` plus `VkPhysicalDeviceDynamicRenderingFeatures`. Core or KHR command entry points are loaded through `vkGetDeviceProcAddr` and checked before the mode remains active.
+- Pipeline: The dynamic path sets `VkGraphicsPipelineCreateInfo::renderPass` to `VK_NULL_HANDLE` and chains `VkPipelineRenderingCreateInfo` with the swapchain color format and undefined depth/stencil formats.
+- Command recording: `VkRenderingAttachmentInfo` supplies the current swapchain image view and clear/store behavior; `VkRenderingInfo` supplies render area, layer count, and attachment list; the path calls the loaded Begin/End Rendering entry points around the unchanged Ch7 indexed instanced textured draw.
+- Layout/synchronization: Before rendering, only the current color subresource transitions from `UNDEFINED` to `COLOR_ATTACHMENT_OPTIMAL` with TOP_OF_PIPE→COLOR_ATTACHMENT_OUTPUT and color-write destination access. `UNDEFINED` is intentional because the attachment is cleared and old contents are discarded. After rendering it transitions to `PRESENT_SRC_KHR` with COLOR_ATTACHMENT_OUTPUT→BOTTOM_OF_PIPE and color-write source access.
+- Swapchain lifecycle: No `VkRenderPass` or `VkFramebuffer` is created in this path. Swapchain image views are recreated by `graphicsBase`; the extent-dependent fixed viewport/scissor pipeline is recreated by its existing callbacks; render area is read from the current swapchain extent each frame.
+- Preserved Ch7 work: Vertex/index/instance buffers, Push Constant, UBO, descriptor set, texture, sampler, mipmaps, boot-image blit, and `vkCmdDrawIndexed` remain shared by all three modes.
+- Build/runtime/validation: Not run after this section per the latest user instruction; to be verified by the user.
+
 ## Ch7-1 Vertex Buffer
 - Status: Complete
 - Files changed: `CMakePresets.json`, `VKBase.h`, `GLfwGeneral.hpp`, `MyVulkan.h`, `main.cpp`, `shader/FirstTriangle.vert.shader`, `shader/FirstTriangle.frag.shader`, `PROGRESS.md`
