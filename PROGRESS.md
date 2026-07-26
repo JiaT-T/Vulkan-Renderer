@@ -30,6 +30,15 @@
 - Resize: All G-buffer images, depth image, views, descriptors, per-swapchain framebuffers, render pass, and pipelines are recreated.
 - Notes: A traditional render pass contains Geometry subpass 0 and Composition subpass 1. Albedo uses `R8G8B8A8_UNORM`; Normal and Position use `R16G16B16A16_SFLOAT`; Depth uses the selected depth format. Four `INPUT_ATTACHMENT` descriptors and matching `input_attachment_index` values feed the composition shader. A precise by-region dependency exposes geometry color/depth writes to input-attachment reads. Lighting is limited to ambient plus one directional diffuse term; transparency, PBR, shadows, and MSAA are intentionally outside this stage.
 
+## Ch8-4 Premultiplied Alpha
+- Status: Implemented; user verification pending
+- Files changed: `CMakeLists.txt`, `MyVulkan.h`, `Chapter8.cpp`, `shader/AlphaTest.vert.shader`, `shader/AlphaTest.frag.shader`, `PROGRESS.md`
+- Shader: Added a three-panel procedural quad shader. The fragment shader returns the selected texture representation unchanged and explicitly avoids repeated premultiplication.
+- Build: Not run; validation requirements were explicitly excluded by the user.
+- Runtime: Not run. Select `--example=alpha`.
+- Validation: Not run.
+- Notes: The existing transparent nettle PNG is loaded twice. The straight copy remains unchanged; the premultiplied copy converts each 8-bit RGB channel with `(RGB*A+127)/255` before mip 0 is uploaded, so all later mip levels filter premultiplied data. The three panels are: straight texture + straight blend, straight texture + intentionally wrong premultiplied blend, and premultiplied texture + correct premultiplied blend. Color factors are respectively `SRC_ALPHA` or `ONE`, both with `ONE_MINUS_SRC_ALPHA`; alpha uses `ONE` and `ONE_MINUS_SRC_ALPHA`. Panels do not overlap, while the notes retain the requirement that real transparent objects still need back-to-front sorting.
+
 ## Ch6-0 Modern Feature Queries
 - Status: Complete
 - Files changed: `VKStart.h`, `helper.h`, `VKBase.h`, `MyVulkan.h`, `main.cpp`, `PROGRESS.md`

@@ -518,7 +518,8 @@ public:
 		return { sampler, image.View(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	}
 
-	VkResult Create(const char* filepath, VkFormat format = VK_FORMAT_R8G8B8A8_UNORM)
+	VkResult Create(const char* filepath, VkFormat format = VK_FORMAT_R8G8B8A8_UNORM,
+		bool premultiplyAlpha = false)
 	{
 		Destroy();
 		int width = 0;
@@ -531,6 +532,19 @@ public:
 			if (pixels)
 				stbi_image_free(pixels);
 			return VK_ERROR_INITIALIZATION_FAILED;
+		}
+		if (premultiplyAlpha)
+		{
+			// PNG/stb data is straight alpha. Convert before uploading mip 0 so every generated mip
+			// filters premultiplied RGB. Integer rounding avoids truncation bias and overflow.
+			const size_t pixelCount = size_t(width) * size_t(height);
+			for (size_t i = 0; i < pixelCount; i++)
+			{
+				const uint16_t alpha = pixels[i * 4 + 3];
+				for (size_t channel = 0; channel < 3; channel++)
+					pixels[i * 4 + channel] = stbi_uc(
+						(uint16_t(pixels[i * 4 + channel]) * alpha + 127u) / 255u);
+			}
 		}
 
 		VkFormatProperties formatProperties;
