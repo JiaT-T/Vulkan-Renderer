@@ -70,10 +70,23 @@ descriptorSetLayout descriptorSetLayout_scene;
 // VkPipeline: 带纹理的索引实例化绘制所使用的图形管线。
 pipeline pipeline_triangle;
 
-const auto& RenderPassAndFramebuffers()
+const auto& LegacyRenderPassAndFramebuffers()
 {
 	static const auto& rpwf = easyVulkan::CreateRpwf_Screen();
 	return rpwf;
+}
+
+const auto& ImagelessRenderPassAndFramebuffer()
+{
+	static const auto& rpwf = easyVulkan::CreateRpwf_Screen_ImagelessFramebuffer();
+	return rpwf;
+}
+
+VkRenderPass ActiveRenderPass()
+{
+	if (graphicsBase::Base().ActiveRenderMode() == RenderMode::ImagelessFramebuffer)
+		return ImagelessRenderPassAndFramebuffer().renderPass;
+	return LegacyRenderPassAndFramebuffers().renderPass;
 }
 
 void CreateLayout()
@@ -144,7 +157,7 @@ void CreatePipeline()
 	auto Create = [] {
 		graphicsPipelineCreateInfoPack pipelineCiPack;
 		pipelineCiPack.createInfo.layout = pipelineLayout_triangle;
-		pipelineCiPack.createInfo.renderPass = RenderPassAndFramebuffers().renderPass;
+		pipelineCiPack.createInfo.renderPass = ActiveRenderPass();
 		pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 		pipelineCiPack.vertexInputBindings.push_back(
 			{
@@ -347,7 +360,12 @@ int Run(bool selfTest)
 		std::this_thread::sleep_for(std::chrono::milliseconds(16));
 	}
 
-	const auto& [renderPass, framebuffers] = RenderPassAndFramebuffers();
+	const bool useImagelessFramebuffer =
+		graphicsBase::Base().ActiveRenderMode() == RenderMode::ImagelessFramebuffer;
+	if (useImagelessFramebuffer)
+		(void)ImagelessRenderPassAndFramebuffer();
+	else
+		(void)LegacyRenderPassAndFramebuffers();
 	CreateLayout();
 	CreatePipeline();
 	bufferMemory vertexBuffer_rectangle;
@@ -494,7 +512,17 @@ int Run(bool selfTest)
 		// 开始录制当前帧命令。
 		commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 		// VkRenderPass + VkFramebuffer: 指定本帧渲染时使用的渲染通道和当前交换链图像对应的帧缓冲。
-		renderPass.CmdBegin(commandBuffer, framebuffers[imageIndex], { {}, windowSize }, clearColor);
+		if (useImagelessFramebuffer)
+		{
+			const auto& rpwf = ImagelessRenderPassAndFramebuffer();
+			rpwf.renderPass.CmdBeginImageless(commandBuffer, rpwf.framebuffer,
+				graphicsBase::Base().SwapchainImageView(imageIndex), { {}, windowSize }, clearColor);
+		}
+		else
+		{
+			const auto& rpwf = LegacyRenderPassAndFramebuffers();
+			rpwf.renderPass.CmdBegin(commandBuffer, rpwf.framebuffers[imageIndex], { {}, windowSize }, clearColor);
+		}
 
 		// VkPipeline: 绑定图形管线后，后续 draw 命令使用该管线状态执行。
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_triangle);
@@ -518,7 +546,10 @@ int Run(bool selfTest)
 			0, 1, &descriptorSets_scene[frameIndex], 0, nullptr);
 		vkCmdDrawIndexed(commandBuffer, uint32_t(std::size(indices_rectangle)), uint32_t(std::size(instances_rectangle)), 0, 0, 0);
 
-		renderPass.CmdEnd(commandBuffer);
+		if (useImagelessFramebuffer)
+			ImagelessRenderPassAndFramebuffer().renderPass.CmdEnd(commandBuffer);
+		else
+			LegacyRenderPassAndFramebuffers().renderPass.CmdEnd(commandBuffer);
 		commandBuffer.End();
 
 		// 提交命令缓冲区：等待图像可用信号量，完成后置位渲染结束信号量和 fence。
@@ -543,9 +574,18 @@ int Run(bool selfTest)
 int main(int argc, char* argv[])
 {
 	bool selfTest = false;
+	RenderMode requestedRenderMode = RenderMode::LegacyRenderPass;
 	for (int i = 1; i < argc; i++)
-		if (std::string_view(argv[i]) == "--self-test")
+	{
+		const std::string_view argument = argv[i];
+		if (argument == "--self-test")
 			selfTest = true;
+		else if (argument == "--mode=legacy")
+			requestedRenderMode = RenderMode::LegacyRenderPass;
+		else if (argument == "--mode=imageless")
+			requestedRenderMode = RenderMode::ImagelessFramebuffer;
+	}
+	graphicsBase::Base().RequestRenderMode(requestedRenderMode);
 
 	if (!InitializeWindow({ 1280, 720 }))
 	{

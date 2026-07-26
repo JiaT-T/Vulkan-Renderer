@@ -931,6 +931,29 @@ public:
 		vkCmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
 	}
 
+	void CmdBeginImageless(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer,
+		VkImageView attachment, VkRect2D renderArea, VkClearValue clearValue) const
+	{
+		// 无图像帧缓冲在创建时只有附件要求；具体 image view 在每次开始渲染通道时提供。
+		VkRenderPassAttachmentBeginInfo attachmentBeginInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_ATTACHMENT_BEGIN_INFO,
+			.attachmentCount = 1,
+			.pAttachments = &attachment
+		};
+		VkRenderPassBeginInfo beginInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+			.pNext = &attachmentBeginInfo,
+			.renderPass = handle,
+			.framebuffer = framebuffer,
+			.renderArea = renderArea,
+			.clearValueCount = 1,
+			.pClearValues = &clearValue
+		};
+		vkCmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
+	}
+
 	void CmdEnd(VkCommandBuffer commandBuffer) const
 	{
 		vkCmdEndRenderPass(commandBuffer);
@@ -981,6 +1004,12 @@ struct renderPassWithFramebuffers
 {
 	renderPass renderPass;
 	std::vector<framebuffer> framebuffers;
+};
+
+struct renderPassWithImagelessFramebuffer
+{
+	renderPass renderPass;
+	framebuffer framebuffer;
 };
 
 const auto& CreateRpwf_Screen()
@@ -1064,6 +1093,101 @@ const auto& CreateRpwf_Screen()
 	CreateFramebuffers();
 	graphicsBase::Base().AddCallback_CreateSwapchain(CreateFramebuffers);
 	graphicsBase::Base().AddCallback_DestroySwapchain(DestroyFramebuffers);
+	graphicsBase::Base().AddCallback_DestroyDevice([] { rpwf.renderPass.Destroy(); });
+	initialized = true;
+	return rpwf;
+}
+
+const auto& CreateRpwf_Screen_ImagelessFramebuffer()
+{
+	static renderPassWithImagelessFramebuffer rpwf;
+	static bool initialized = false;
+	if (initialized)
+		return rpwf;
+
+	VkAttachmentDescription attachmentDescription =
+	{
+		.format = graphicsBase::Base().SwapchainCreateInfo().imageFormat,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+	};
+	VkAttachmentReference attachmentReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+	VkSubpassDescription subpassDescription =
+	{
+		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		.colorAttachmentCount = 1,
+		.pColorAttachments = &attachmentReference
+	};
+	VkSubpassDependency subpassDependency =
+	{
+		.srcSubpass = VK_SUBPASS_EXTERNAL,
+		.dstSubpass = 0,
+		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT
+	};
+	VkRenderPassCreateInfo renderPassCreateInfo =
+	{
+		.attachmentCount = 1,
+		.pAttachments = &attachmentDescription,
+		.subpassCount = 1,
+		.pSubpasses = &subpassDescription,
+		.dependencyCount = 1,
+		.pDependencies = &subpassDependency
+	};
+	if (rpwf.renderPass.Create(renderPassCreateInfo))
+		abort();
+
+	auto CreateFramebuffer = [] {
+		const VkSwapchainCreateInfoKHR& swapchainCi = graphicsBase::Base().SwapchainCreateInfo();
+		VkFramebufferAttachmentImageInfo attachmentImageInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_ATTACHMENT_IMAGE_INFO,
+			.usage = swapchainCi.imageUsage,
+			.width = swapchainCi.imageExtent.width,
+			.height = swapchainCi.imageExtent.height,
+			.layerCount = swapchainCi.imageArrayLayers,
+			.viewFormatCount = 1,
+			.pViewFormats = &swapchainCi.imageFormat
+		};
+		if (swapchainCi.flags & VK_SWAPCHAIN_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT_KHR)
+			attachmentImageInfo.flags |= VK_IMAGE_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT;
+		if (swapchainCi.flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR)
+			attachmentImageInfo.flags |= VK_IMAGE_CREATE_PROTECTED_BIT;
+		if (swapchainCi.flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)
+			attachmentImageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+
+		VkFramebufferAttachmentsCreateInfo attachmentsCreateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_ATTACHMENTS_CREATE_INFO,
+			.attachmentImageInfoCount = 1,
+			.pAttachmentImageInfos = &attachmentImageInfo
+		};
+		VkFramebufferCreateInfo framebufferCreateInfo =
+		{
+			.pNext = &attachmentsCreateInfo,
+			.flags = VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT,
+			.renderPass = rpwf.renderPass,
+			.attachmentCount = 1,
+			.pAttachments = nullptr,
+			.width = swapchainCi.imageExtent.width,
+			.height = swapchainCi.imageExtent.height,
+			.layers = swapchainCi.imageArrayLayers
+		};
+		if (rpwf.framebuffer.Create(framebufferCreateInfo))
+			abort();
+		outStream << std::format("[ Ch6-1 ] Created one imageless framebuffer for {} swapchain images ({}x{}).\n",
+			graphicsBase::Base().SwapchainImageCount(), swapchainCi.imageExtent.width, swapchainCi.imageExtent.height);
+	};
+
+	auto DestroyFramebuffer = [] { rpwf.framebuffer.Destroy(); };
+	CreateFramebuffer();
+	graphicsBase::Base().AddCallback_CreateSwapchain(CreateFramebuffer);
+	graphicsBase::Base().AddCallback_DestroySwapchain(DestroyFramebuffer);
 	graphicsBase::Base().AddCallback_DestroyDevice([] { rpwf.renderPass.Destroy(); });
 	initialized = true;
 	return rpwf;

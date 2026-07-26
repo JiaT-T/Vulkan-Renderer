@@ -11,6 +11,15 @@
 - Enabled state: `samplerAnisotropy=true`; `imagelessFramebuffer=false`; `dynamicRendering=false`; enabled device extension is `VK_KHR_swapchain`.
 - Notes: Queries now use `VkPhysicalDeviceFeatures2`, Vulkan 1.1/1.2/1.3 feature structures, `VkPhysicalDeviceProperties2`, and `VkPhysicalDeviceMemoryProperties2`. A reusable `pNextChain` prevents duplicate objects and, by default, duplicate `sType` values. Supported and enabled feature structures are stored separately. Existing Ch7 synchronization and shutdown validation issues found by the first logged run were corrected.
 
+## Ch6-1 Imageless Framebuffer
+- Status: Implemented; user verification pending
+- Files changed: `VKBase.h`, `MyVulkan.h`, `main.cpp`, `PROGRESS.md`
+- Run mode: `--mode=imageless` requests `ImagelessFramebuffer`; `--mode=legacy` keeps the traditional comparison path.
+- Core/extension selection: Vulkan 1.2+ uses `VkPhysicalDeviceVulkan12Features::imagelessFramebuffer`. The Vulkan 1.1 fallback checks `VK_KHR_image_format_list` and `VK_KHR_imageless_framebuffer`, then enables `VkPhysicalDeviceImagelessFramebufferFeatures`. Unsupported requests log the reason and select `LegacyRenderPass`.
+- Implementation: One framebuffer is created with `VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT`, `VkFramebufferAttachmentsCreateInfo`, and `VkFramebufferAttachmentImageInfo`. The current swapchain image view is supplied through `VkRenderPassAttachmentBeginInfo` when the render pass begins.
+- Swapchain lifecycle: The single imageless framebuffer is destroyed before old swapchain image views and recreated from the new format requirements, extent, usage, and layer count. The render pass remains device-lifetime in this project because swapchain recreation retains the selected surface format.
+- Build/runtime/validation: Not run after this section per the latest user instruction; to be verified by the user.
+
 ## Ch7-1 Vertex Buffer
 - Status: Complete
 - Files changed: `CMakePresets.json`, `VKBase.h`, `GLfwGeneral.hpp`, `MyVulkan.h`, `main.cpp`, `shader/FirstTriangle.vert.shader`, `shader/FirstTriangle.frag.shader`, `PROGRESS.md`

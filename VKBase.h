@@ -4,6 +4,23 @@
 
 namespace vulkan
 {
+enum class RenderMode
+{
+	LegacyRenderPass,
+	ImagelessFramebuffer,
+	DynamicRendering
+};
+
+inline const char* RenderModeName(RenderMode mode)
+{
+	switch (mode)
+	{
+	case RenderMode::ImagelessFramebuffer: return "ImagelessFramebuffer";
+	case RenderMode::DynamicRendering: return "DynamicRendering";
+	default: return "LegacyRenderPass";
+	}
+}
+
 // Vulkan 扩展结构都以 sType/pNext 开头。该类统一维护链首，并阻止同一对象
 // 或同一 sType 被意外重复加入；少数规范允许重复 sType 的场景可显式放行。
 class pNextChain
@@ -373,6 +390,8 @@ private :
 	VkPhysicalDeviceVulkan11Features supportedVulkan11Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 	VkPhysicalDeviceVulkan12Features supportedVulkan12Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
 	VkPhysicalDeviceVulkan13Features supportedVulkan13Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+	VkPhysicalDeviceImagelessFramebufferFeatures supportedImagelessFramebufferFeatures =
+		{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES };
 	pNextChain physicalDeviceFeatureQueryChain;
 
 	VkPhysicalDeviceProperties2 physicalDeviceProperties2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
@@ -388,9 +407,64 @@ private :
 	VkPhysicalDeviceVulkan11Features enabledVulkan11Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 	VkPhysicalDeviceVulkan12Features enabledVulkan12Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
 	VkPhysicalDeviceVulkan13Features enabledVulkan13Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+	VkPhysicalDeviceImagelessFramebufferFeatures enabledImagelessFramebufferFeatures =
+		{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES };
 	pNextChain deviceCreateChain;
 	bool requestSamplerAnisotropy = true;
 	bool requireSamplerAnisotropy = false;
+	RenderMode requestedRenderMode = RenderMode::LegacyRenderPass;
+	RenderMode activeRenderMode = RenderMode::LegacyRenderPass;
+	bool imagelessFramebufferUsesExtension = false;
+
+	bool IsDeviceExtensionAvailable(const char* extensionName) const
+	{
+		uint32_t extensionCount = 0;
+		if (vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, nullptr))
+			return false;
+		std::vector<VkExtensionProperties> extensions(extensionCount);
+		if (vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, extensions.data()))
+			return false;
+		for (const VkExtensionProperties& extension : extensions)
+			if (!strcmp(extensionName, extension.extensionName))
+				return true;
+		return false;
+	}
+
+	void ConfigureRequestedRenderMode()
+	{
+		activeRenderMode = RenderMode::LegacyRenderPass;
+		imagelessFramebufferUsesExtension = false;
+		if (requestedRenderMode != RenderMode::ImagelessFramebuffer)
+			return;
+
+		if (physicalDeviceProperties.apiVersion >= VK_API_VERSION_1_2 &&
+			supportedVulkan12Features.imagelessFramebuffer)
+		{
+			enabledVulkan12Features.imagelessFramebuffer = VK_TRUE;
+			activeRenderMode = RenderMode::ImagelessFramebuffer;
+			outStream << "[ Ch6-1 ] Imageless framebuffer enabled through Vulkan 1.2 core.\n";
+			return;
+		}
+
+		const bool extensionPathSupported =
+			physicalDeviceProperties.apiVersion >= VK_API_VERSION_1_1 &&
+			supportedImagelessFramebufferFeatures.imagelessFramebuffer &&
+			IsDeviceExtensionAvailable(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME) &&
+			IsDeviceExtensionAvailable(VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME);
+		if (extensionPathSupported)
+		{
+			enabledImagelessFramebufferFeatures.imagelessFramebuffer = VK_TRUE;
+			deviceCreateChain.Add(enabledImagelessFramebufferFeatures);
+			AddDeviceExtension(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME);
+			AddDeviceExtension(VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME);
+			activeRenderMode = RenderMode::ImagelessFramebuffer;
+			imagelessFramebufferUsesExtension = true;
+			outStream << "[ Ch6-1 ] Imageless framebuffer enabled through VK_KHR_imageless_framebuffer.\n";
+			return;
+		}
+
+		outStream << "[ Ch6-1 ] Imageless framebuffer is unsupported; falling back to LegacyRenderPass.\n";
+	}
 
 	// 逻辑设备
 	VkDevice device;
@@ -476,6 +550,20 @@ public :
 	const VkPhysicalDeviceVulkan11Features& EnabledVulkan11Features() const { return enabledVulkan11Features; }
 	const VkPhysicalDeviceVulkan12Features& EnabledVulkan12Features() const { return enabledVulkan12Features; }
 	const VkPhysicalDeviceVulkan13Features& EnabledVulkan13Features() const { return enabledVulkan13Features; }
+	bool ImagelessFramebufferSupported() const
+	{
+		return supportedVulkan12Features.imagelessFramebuffer ||
+			supportedImagelessFramebufferFeatures.imagelessFramebuffer;
+	}
+	bool ImagelessFramebufferEnabled() const
+	{
+		return enabledVulkan12Features.imagelessFramebuffer ||
+			enabledImagelessFramebufferFeatures.imagelessFramebuffer;
+	}
+	bool ImagelessFramebufferUsesExtension() const { return imagelessFramebufferUsesExtension; }
+	void RequestRenderMode(RenderMode mode) { requestedRenderMode = mode; }
+	RenderMode RequestedRenderMode() const { return requestedRenderMode; }
+	RenderMode ActiveRenderMode() const { return activeRenderMode; }
 	uint32_t PhysicalDeviceApiVersion() const { return physicalDeviceProperties.apiVersion; }
 
 	template<typename Structure>
@@ -627,14 +715,16 @@ public :
 		// 只要成功找到了合法的队列族，代码就会把当前选中的物理设备句柄赋值给 physicalDevice，并返回 VK_SUCCESS
 		physicalDevice = availablePhysicalDevices[deviceIndex];
 
-		// 用 Features2/Properties2/MemoryProperties2 查询核心结构及其 pNext 链。
-		supportedFeatures2.pNext = physicalDeviceFeatureQueryChain.Head();
-		vkGetPhysicalDeviceFeatures2(physicalDevice, &supportedFeatures2);
+		// 先取得设备 API 版本，再决定是否需要把已提升为核心的扩展结构单独加入查询链。
 		physicalDeviceProperties2.pNext = physicalDevicePropertyQueryChain.Head();
 		vkGetPhysicalDeviceProperties2(physicalDevice, &physicalDeviceProperties2);
+		physicalDeviceProperties = physicalDeviceProperties2.properties;
+		if (physicalDeviceProperties.apiVersion < VK_API_VERSION_1_2)
+			physicalDeviceFeatureQueryChain.Add(supportedImagelessFramebufferFeatures);
+		supportedFeatures2.pNext = physicalDeviceFeatureQueryChain.Head();
+		vkGetPhysicalDeviceFeatures2(physicalDevice, &supportedFeatures2);
 		physicalDeviceMemoryProperties2.pNext = physicalDeviceMemoryPropertyQueryChain.Head();
 		vkGetPhysicalDeviceMemoryProperties2(physicalDevice, &physicalDeviceMemoryProperties2);
-		physicalDeviceProperties = physicalDeviceProperties2.properties;
 		physicalDeviceMemoryProperties = physicalDeviceMemoryProperties2.memoryProperties;
 		return VK_SUCCESS;
 	}
@@ -682,6 +772,7 @@ public :
 		}
 		enabledFeatures2.features.samplerAnisotropy =
 			requestSamplerAnisotropy && supportedFeatures2.features.samplerAnisotropy;
+		ConfigureRequestedRenderMode();
 
 		// 版本特性结构只在物理设备实际支持相应核心版本时加入设备创建链。
 		if (physicalDeviceProperties.apiVersion >= VK_API_VERSION_1_1)
@@ -739,15 +830,17 @@ public :
 			physicalDeviceProperties.deviceName, deviceType,
 			vulkan12Properties.driverName, vulkan12Properties.driverInfo, physicalDeviceProperties.driverVersion,
 			supportedFeatures2.features.samplerAnisotropy != VK_FALSE,
-			supportedVulkan12Features.imagelessFramebuffer != VK_FALSE,
+			ImagelessFramebufferSupported(),
 			supportedVulkan13Features.dynamicRendering != VK_FALSE,
 			enabledFeatures2.features.samplerAnisotropy != VK_FALSE,
-			enabledVulkan12Features.imagelessFramebuffer != VK_FALSE,
+			ImagelessFramebufferEnabled(),
 			enabledVulkan13Features.dynamicRendering != VK_FALSE);
 		outStream << "[ Ch6-0 ] Enabled device extensions:";
 		for (const char* extension : deviceExtensions)
 			outStream << std::format(" {}", extension);
 		outStream << "\n";
+		outStream << std::format("[ Ch6 ] Requested mode: {}; active mode: {}\n",
+			RenderModeName(requestedRenderMode), RenderModeName(activeRenderMode));
 		// 调用回调函数
 		ExecuteCallbacks(callbacks_createDevice);
 		return VK_SUCCESS;
