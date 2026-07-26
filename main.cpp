@@ -1,5 +1,6 @@
 #include "GLfwGeneral.hpp"
 #include "MyVulkan.h"
+#include "Chapter8.h"
 #include <cstddef>
 #include <cmath>
 #include <array>
@@ -634,9 +635,13 @@ int main(int argc, char* argv[])
 {
 	bool selfTest = false;
 	RenderMode requestedRenderMode = RenderMode::DynamicRendering;
+	RenderExample renderExample = RenderExample::Forward;
+	HdrPreference hdrPreference = HdrPreference::Auto;
 	for (int i = 1; i < argc; i++)
 	{
 		const std::string_view argument = argv[i];
+		if (ParseRenderExample(argument, renderExample) || ParseHdrPreference(argument, hdrPreference))
+			continue;
 		if (argument == "--self-test")
 			selfTest = true;
 		else if (argument == "--mode=legacy")
@@ -646,6 +651,9 @@ int main(int argc, char* argv[])
 		else if (argument == "--mode=dynamic")
 			requestedRenderMode = RenderMode::DynamicRendering;
 	}
+	// 第八章示例按教程结构使用传统 Render Pass；Forward 模式仍保留第六章三路径切换。
+	if (renderExample != RenderExample::Forward)
+		requestedRenderMode = RenderMode::LegacyRenderPass;
 	graphicsBase::Base().RequestRenderMode(requestedRenderMode);
 
 	if (!InitializeWindow({ 1280, 720 }))
@@ -654,7 +662,9 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
-	const int result = Run(selfTest);
+	const int result = renderExample == RenderExample::Forward
+		? Run(selfTest)
+		: RunChapter8Example(renderExample, hdrPreference);
 	TerminateWindow();
 	return result;
 }

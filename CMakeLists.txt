@@ -77,7 +77,7 @@ find_program(GLSLC_EXECUTABLE glslc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SD
 
 set(TEMPLATE_DIR ${CMAKE_BINARY_DIR}/${TEMPLATE_NAME})
 
-add_executable (${TEMPLATE_NAME} main.cpp stb_image.cpp)
+add_executable (${TEMPLATE_NAME} main.cpp Chapter8.cpp stb_image.cpp)
 set_target_properties (${TEMPLATE_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${TEMPLATE_DIR})
 set_target_properties (${TEMPLATE_NAME} PROPERTIES CXX_STANDARD 20)
 target_link_libraries (${TEMPLATE_NAME} Vulkan::cppm glfw)
@@ -118,23 +118,28 @@ add_custom_command(
 add_custom_target(${SHADER_TARGET} DEPENDS ${SHADER_OUTPUT})
 add_dependencies(${TEMPLATE_NAME} ${SHADER_TARGET})
 
-# GLSL shaders
+# GLSL shaders. Each source keeps its stage in the filename, for example
+# Offscreen.vert.shader -> Offscreen.vert.spv.
 set (GLSL_SHADER_TARGET ${TEMPLATE_NAME}GlslShaders)
 set (GLSL_SHADER_DIR ${TEMPLATE_DIR}/shader)
-set (GLSL_VERTEX_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/shader/FirstTriangle.vert.shader")
-set (GLSL_FRAGMENT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/shader/FirstTriangle.frag.shader")
-set (GLSL_VERTEX_OUTPUT "${GLSL_SHADER_DIR}/FirstTriangle.vert.spv")
-set (GLSL_FRAGMENT_OUTPUT "${GLSL_SHADER_DIR}/FirstTriangle.frag.spv")
-add_custom_command(
-  OUTPUT  ${GLSL_VERTEX_OUTPUT} ${GLSL_FRAGMENT_OUTPUT}
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${GLSL_SHADER_DIR}
-  COMMAND ${GLSLC_EXECUTABLE} ${GLSL_VERTEX_SOURCE} -o ${GLSL_VERTEX_OUTPUT}
-  COMMAND ${GLSLC_EXECUTABLE} ${GLSL_FRAGMENT_SOURCE} -o ${GLSL_FRAGMENT_OUTPUT}
-  DEPENDS ${GLSL_VERTEX_SOURCE} ${GLSL_FRAGMENT_SOURCE}
-  COMMENT "Compiling GLSL Shaders"
-  VERBATIM
-)
-add_custom_target(${GLSL_SHADER_TARGET} DEPENDS ${GLSL_VERTEX_OUTPUT} ${GLSL_FRAGMENT_OUTPUT})
+file(GLOB GLSL_SHADER_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/shader/*.vert.shader"
+  "${CMAKE_CURRENT_SOURCE_DIR}/shader/*.frag.shader")
+set(GLSL_SHADER_OUTPUTS)
+foreach(GLSL_SHADER_SOURCE IN LISTS GLSL_SHADER_SOURCES)
+  get_filename_component(GLSL_SHADER_NAME ${GLSL_SHADER_SOURCE} NAME)
+  string(REGEX REPLACE "\\.shader$" ".spv" GLSL_SHADER_BINARY ${GLSL_SHADER_NAME})
+  set(GLSL_SHADER_OUTPUT "${GLSL_SHADER_DIR}/${GLSL_SHADER_BINARY}")
+  add_custom_command(
+    OUTPUT ${GLSL_SHADER_OUTPUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${GLSL_SHADER_DIR}
+    COMMAND ${GLSLC_EXECUTABLE} ${GLSL_SHADER_SOURCE} -o ${GLSL_SHADER_OUTPUT}
+    DEPENDS ${GLSL_SHADER_SOURCE}
+    COMMENT "Compiling GLSL shader ${GLSL_SHADER_NAME}"
+    VERBATIM)
+  list(APPEND GLSL_SHADER_OUTPUTS ${GLSL_SHADER_OUTPUT})
+endforeach()
+add_custom_target(${GLSL_SHADER_TARGET} DEPENDS ${GLSL_SHADER_OUTPUTS})
 add_dependencies(${TEMPLATE_NAME} ${GLSL_SHADER_TARGET})
 
 # Assets

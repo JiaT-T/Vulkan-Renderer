@@ -1,5 +1,15 @@
 # EasyVulkan Chapter 6 and 7 Progress
 
+## Ch8-1 Offscreen Rendering
+- Status: Implemented; user verification pending
+- Files changed: `CMakeLists.txt`, `Chapter8.h`, `Chapter8.cpp`, `main.cpp`, `shader/Offscreen.vert.shader`, `shader/Offscreen.frag.shader`, `shader/Fullscreen.vert.shader`, `shader/Fullscreen.frag.shader`, `PROGRESS.md`
+- Shader: Added a procedural offscreen scene shader and a full-screen triangle sampling shader. CMake now discovers all `*.vert.shader` and `*.frag.shader` sources and maps them to same-named SPIR-V outputs.
+- Build: Not run; validation requirements were explicitly excluded by the user.
+- Runtime: Not run. Select with `--example=offscreen`.
+- Validation: Not run.
+- Resize: Swapchain callbacks destroy and recreate the offscreen image, memory, view, framebuffer, descriptor pool/set, screen framebuffers, render passes, and extent-dependent pipelines.
+- Notes: The scene is drawn only into an `R8G8B8A8_UNORM` image with `COLOR_ATTACHMENT|SAMPLED` usage. Its render-pass final layout and dependency make color writes visible to the following fragment shader. A separate full-screen pass is the only draw that writes the sampled result to the swapchain. The renderer keeps one frame in flight, so the single offscreen target is not concurrently read and written by multiple frames.
+
 ## Ch6-0 Modern Feature Queries
 - Status: Complete
 - Files changed: `VKStart.h`, `helper.h`, `VKBase.h`, `MyVulkan.h`, `main.cpp`, `PROGRESS.md`
