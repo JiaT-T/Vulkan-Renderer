@@ -2,7 +2,7 @@
 
 ## Ch8-1 Offscreen Rendering
 - Status: Implemented; user verification pending
-- Files changed: `CMakeLists.txt`, `Chapter8.h`, `Chapter8.cpp`, `main.cpp`, `shader/Offscreen.vert.shader`, `shader/Offscreen.frag.shader`, `shader/Fullscreen.vert.shader`, `shader/Fullscreen.frag.shader`, `PROGRESS.md`
+- Files changed: `CMakeLists.txt`, `RenderExample.h/.cpp`, `RenderFeatureRenderer.h/.cpp`, `OffscreenRenderer.h/.cpp/.inl`, `main.cpp`, `shader/Offscreen.vert.shader`, `shader/Offscreen.frag.shader`, `shader/Fullscreen.vert.shader`, `shader/Fullscreen.frag.shader`, `PROGRESS.md`
 - Shader: Added a procedural offscreen scene shader and a full-screen triangle sampling shader. CMake now discovers all `*.vert.shader` and `*.frag.shader` sources and maps them to same-named SPIR-V outputs.
 - Build: Not run; validation requirements were explicitly excluded by the user.
 - Runtime: Not run. Select with `--example=offscreen`.
@@ -12,7 +12,7 @@
 
 ## Ch8-2 Depth Test and Visualization
 - Status: Implemented; user verification pending
-- Files changed: `MyVulkan.h`, `Chapter8.cpp`, `shader/DepthScene.vert.shader`, `shader/DepthScene.frag.shader`, `shader/DepthVisualize.frag.shader`, `PROGRESS.md`
+- Files changed: `MyVulkan.h`, `DepthRenderer.h/.cpp/.inl`, `RenderFeatureRenderer.cpp`, `shader/DepthScene.vert.shader`, `shader/DepthScene.frag.shader`, `shader/DepthVisualize.frag.shader`, `PROGRESS.md`
 - Shader: Added instanced cube MVP/normal transformation, simple directional lighting, and raw/linearized perspective-depth display.
 - Build: Not run; validation requirements were explicitly excluded by the user.
 - Runtime: Not run. Select `--example=depth`, `--example=depth-off`, `--example=depth-raw`, or `--example=depth-linear`.
@@ -22,7 +22,7 @@
 
 ## Ch8-3 Deferred Rendering
 - Status: Implemented; user verification pending
-- Files changed: `Chapter8.cpp`, `shader/DeferredGeometry.vert.shader`, `shader/DeferredGeometry.frag.shader`, `shader/DeferredComposition.frag.shader`, `PROGRESS.md`
+- Files changed: `DeferredRenderer.h/.cpp/.inl`, `RenderFeatureRenderer.cpp`, `shader/DeferredGeometry.vert.shader`, `shader/DeferredGeometry.frag.shader`, `shader/DeferredComposition.frag.shader`, `PROGRESS.md`
 - Shader: Geometry pass writes Albedo, world-space Normal, and world Position. Composition reads four input attachments, including Depth, and provides lighting/Albedo/Normal/Position debug modes.
 - Build: Not run; validation requirements were explicitly excluded by the user.
 - Runtime: Not run. Select `--example=deferred`, `--example=gbuffer-albedo`, `--example=gbuffer-normal`, or `--example=gbuffer-position`.
@@ -32,7 +32,7 @@
 
 ## Ch8-4 Premultiplied Alpha
 - Status: Implemented; user verification pending
-- Files changed: `CMakeLists.txt`, `MyVulkan.h`, `Chapter8.cpp`, `shader/AlphaTest.vert.shader`, `shader/AlphaTest.frag.shader`, `PROGRESS.md`
+- Files changed: `CMakeLists.txt`, `MyVulkan.h`, `AlphaBlendingRenderer.h/.cpp/.inl`, `RenderFeatureRenderer.cpp`, `shader/AlphaTest.vert.shader`, `shader/AlphaTest.frag.shader`, `PROGRESS.md`
 - Shader: Added a three-panel procedural quad shader. The fragment shader returns the selected texture representation unchanged and explicitly avoids repeated premultiplication.
 - Build: Not run; validation requirements were explicitly excluded by the user.
 - Runtime: Not run. Select `--example=alpha`.
@@ -41,7 +41,7 @@
 
 ## Ch8-5 sRGB and HDR
 - Status: Implemented; user verification pending
-- Files changed: `VKBase.h`, `Chapter8.cpp`, `main.cpp`, `shader/ColorSpaceTest.frag.shader`, `shader/HDRScene.frag.shader`, `shader/ToneMapping.frag.shader`, `PROGRESS.md`
+- Files changed: `VKBase.h`, `ColorOutputRenderer.h/.cpp/.inl`, `RenderFeatureRenderer.cpp`, `main.cpp`, `shader/ColorSpaceTest.frag.shader`, `shader/HDRScene.frag.shader`, `shader/ToneMapping.frag.shader`, `PROGRESS.md`
 - Shader: Added encoded-vs-linear averaging comparison, an HDR gradient/highlight source with values above 1.0, ACES-approximate SDR tone mapping, conditional sRGB encoding, scRGB linear output, and Rec.709→Rec.2020 plus ST.2084 PQ output.
 - Build: Not run; validation requirements were explicitly excluded by the user.
 - SDR result: Not run. Select `--example=srgb` or `--example=sdr`; `--hdr=sdr` forces the SDR route.

@@ -29,4 +29,4 @@ enum class HdrPreference
 bool ParseRenderExample(std::string_view argument, RenderExample& example);
 bool ParseHdrPreference(std::string_view argument, HdrPreference& preference);
 const char* RenderExampleName(RenderExample example);
-int RunChapter8Example(RenderExample example, HdrPreference hdrPreference);
+int RunRenderExample(RenderExample example, HdrPreference hdrPreference);

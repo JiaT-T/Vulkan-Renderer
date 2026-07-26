@@ -1,6 +1,6 @@
 #include "GLfwGeneral.hpp"
 #include "MyVulkan.h"
-#include "Chapter8.h"
+#include "RenderExample.h"
 #include <cstddef>
 #include <cmath>
 #include <array>
@@ -651,7 +651,7 @@ int main(int argc, char* argv[])
 		else if (argument == "--mode=dynamic")
 			requestedRenderMode = RenderMode::DynamicRendering;
 	}
-	// 第八章示例按教程结构使用传统 Render Pass；Forward 模式仍保留第六章三路径切换。
+	// 离屏、深度、延迟、Alpha 和色彩输出示例使用传统 Render Pass；Forward 模式保留三路径切换。
 	if (renderExample != RenderExample::Forward)
 		requestedRenderMode = RenderMode::LegacyRenderPass;
 	const bool requestHdrFormats = hdrPreference == HdrPreference::RequestHDR ||
@@ -662,7 +662,7 @@ int main(int argc, char* argv[])
 		if (!graphicsBase::Base().CheckInstanceExtensions(colorSpaceExtension) && colorSpaceExtension[0])
 			graphicsBase::Base().AddInstanceExtension(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 		else
-			outStream << "[ Ch8-5 ] VK_EXT_swapchain_colorspace is unavailable; HDR will fall back to SDR.\n";
+			outStream << "[ ColorOutput ] VK_EXT_swapchain_colorspace is unavailable; HDR will fall back to SDR.\n";
 	}
 	graphicsBase::Base().RequestRenderMode(requestedRenderMode);
 
@@ -674,7 +674,7 @@ int main(int argc, char* argv[])
 
 	const int result = renderExample == RenderExample::Forward
 		? Run(selfTest)
-		: RunChapter8Example(renderExample, hdrPreference);
+		: RunRenderExample(renderExample, hdrPreference);
 	TerminateWindow();
 	return result;
 }

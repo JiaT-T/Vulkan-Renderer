@@ -1,6 +1,6 @@
 # EasyVulkan 第八章学习笔记
 
-本笔记对应 `Vulkan-Renderer` 当前工程中的实际代码。第八章没有替换第六章的 Legacy/Imageless/Dynamic Rendering，也没有删除第七章的 Vertex、Index、Instance、Push Constant、Uniform、Descriptor、Texture 和 Mipmap 功能，而是在独立的 `Chapter8.cpp` 中增加多阶段渲染示例。
+本笔记对应 `Vulkan-Renderer` 当前工程中的实际代码。第八章没有替换第六章的 Legacy/Imageless/Dynamic Rendering，也没有删除第七章的 Vertex、Index、Instance、Push Constant、Uniform、Descriptor、Texture 和 Mipmap 功能；多阶段渲染代码按离屏、深度、延迟、Alpha 混合和色彩输出分别组织。
 
 第八章示例统一通过命令行选择：
 
@@ -682,20 +682,27 @@ Scene Linear Rec.709
 ### 1. 新增核心文件
 
 ```text
-Chapter8.h
+RenderExample.h/.cpp
   RenderExample / HdrPreference
-  参数解析与第八章入口声明
+  参数解析与功能分派
 
-Chapter8.cpp
-  Offscreen Target
-  Depth Attachment
-  G-buffer
-  Alpha 纹理与管线
-  HDR Target
-  Render Pass / Subpass / Framebuffer
-  Descriptor / Pipeline
-  交换链重建回调
-  第八章渲染循环
+RenderFeatureRenderer.h/.cpp
+  公共设备资源、交换链回调和帧循环
+
+OffscreenRenderer.h/.cpp/.inl
+  Offscreen Target、采样描述符和全屏合成
+
+DepthRenderer.h/.cpp/.inl
+  Depth Attachment、深度测试和深度可视化
+
+DeferredRenderer.h/.cpp/.inl
+  G-buffer、Geometry/Composition Subpass 和 Input Attachment
+
+AlphaBlendingRenderer.h/.cpp/.inl
+  Straight/Premultiplied Alpha 纹理与混合管线
+
+ColorOutputRenderer.h/.cpp/.inl
+  sRGB、HDR Target、Tone Mapping 和输出色彩空间
 ```
 
 ### 2. Shader

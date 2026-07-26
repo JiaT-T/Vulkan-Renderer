@@ -77,7 +77,28 @@ find_program(GLSLC_EXECUTABLE glslc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SD
 
 set(TEMPLATE_DIR ${CMAKE_BINARY_DIR}/${TEMPLATE_NAME})
 
-add_executable (${TEMPLATE_NAME} main.cpp Chapter8.cpp stb_image.cpp)
+add_executable (${TEMPLATE_NAME}
+	main.cpp
+	RenderExample.cpp
+	RenderFeatureRenderer.cpp
+	OffscreenRenderer.cpp
+	DepthRenderer.cpp
+	DeferredRenderer.cpp
+	AlphaBlendingRenderer.cpp
+	ColorOutputRenderer.cpp
+	RenderExample.h
+	RenderFeatureRenderer.h
+	OffscreenRenderer.h
+	OffscreenRenderer.inl
+	DepthRenderer.h
+	DepthRenderer.inl
+	DeferredRenderer.h
+	DeferredRenderer.inl
+	AlphaBlendingRenderer.h
+	AlphaBlendingRenderer.inl
+	ColorOutputRenderer.h
+	ColorOutputRenderer.inl
+	stb_image.cpp)
 set_target_properties (${TEMPLATE_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${TEMPLATE_DIR})
 set_target_properties (${TEMPLATE_NAME} PROPERTIES CXX_STANDARD 20)
 target_link_libraries (${TEMPLATE_NAME} Vulkan::cppm glfw)
