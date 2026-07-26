@@ -1,4 +1,4 @@
-# EasyVulkan Chapter 6 and 7 Progress
+# EasyVulkan Chapter 6, 7 and 8 Progress
 
 ## Ch8-1 Offscreen Rendering
 - Status: Implemented; user verification pending
