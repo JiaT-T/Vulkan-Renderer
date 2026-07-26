@@ -121,7 +121,12 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 }
 void TerminateWindow()
 {
-	vulkan::graphicsBase::Base().WaitIdle();
+	vulkan::graphicsBase::Base().Terminate();
+	if (pWindow)
+	{
+		glfwDestroyWindow(pWindow);
+		pWindow = nullptr;
+	}
 	glfwTerminate();
 }
 

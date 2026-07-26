@@ -596,6 +596,40 @@ public :
 			outStream << std::format("[ graphicsBase ] ERROR\nFailed to wait for the device to be idle!\nError code: {}\n", string_VkResult(result));
 		return result;
 	}
+	void Terminate()
+	{
+		if (device)
+		{
+			WaitIdle();
+			ExecuteCallbacks(callbacks_destroySwapchain);
+			for (VkImageView imageView : swapchainImageViews)
+				if (imageView)
+					vkDestroyImageView(device, imageView, nullptr);
+			swapchainImageViews.clear();
+			swapchainImages.clear();
+
+			if (swapchain)
+				vkDestroySwapchainKHR(device, swapchain, nullptr);
+			if (swapchainCreateInfo.oldSwapchain && swapchainCreateInfo.oldSwapchain != swapchain)
+				vkDestroySwapchainKHR(device, swapchainCreateInfo.oldSwapchain, nullptr);
+			swapchain = VK_NULL_HANDLE;
+			swapchainCreateInfo.oldSwapchain = VK_NULL_HANDLE;
+
+			ExecuteCallbacks(callbacks_destroyDevice);
+			vkDestroyDevice(device, nullptr);
+			device = VK_NULL_HANDLE;
+		}
+		if (surface && instance)
+		{
+			vkDestroySurfaceKHR(instance, surface, nullptr);
+			surface = VK_NULL_HANDLE;
+		}
+		if (instance)
+		{
+			vkDestroyInstance(instance, nullptr);
+			instance = VK_NULL_HANDLE;
+		}
+	}
 
 // ----- 设备相关的回调函数列表 -----
 private:

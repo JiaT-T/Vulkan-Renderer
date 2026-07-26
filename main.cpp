@@ -1,10 +1,24 @@
 #include "GLfwGeneral.hpp"
 #include "MyVulkan.h"
+#include <cstddef>
 
 using namespace vulkan;
 using namespace easyVulkan;
 
 void TitleFps();
+
+struct Vertex
+{
+	glm::vec2 position;
+	glm::vec4 color;
+};
+
+const Vertex vertices_triangle[] =
+{
+	{ {  0.0f, -0.5f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+	{ { -0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
+	{ {  0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
+};
 
 // VkPipelineLayout: 三角形管线使用的布局，本节不包含描述符集和 push constant。
 pipelineLayout pipelineLayout_triangle;
@@ -22,6 +36,12 @@ void CreateLayout()
 	// VkPipelineLayoutCreateInfo: 本节 shader 不访问外部资源，因此创建空管线布局。
 	VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {};
 	pipelineLayout_triangle.Create(pipelineLayoutCreateInfo);
+	static bool callbackAdded = false;
+	if (!callbackAdded)
+	{
+		graphicsBase::Base().AddCallback_DestroyDevice([] { pipelineLayout_triangle.Destroy(); });
+		callbackAdded = true;
+	}
 }
 
 void CreatePipeline()
@@ -40,6 +60,26 @@ void CreatePipeline()
 		pipelineCiPack.createInfo.layout = pipelineLayout_triangle;
 		pipelineCiPack.createInfo.renderPass = RenderPassAndFramebuffers().renderPass;
 		pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		pipelineCiPack.vertexInputBindings.push_back(
+			{
+				.binding = 0,
+				.stride = sizeof(Vertex),
+				.inputRate = VK_VERTEX_INPUT_RATE_VERTEX
+			});
+		pipelineCiPack.vertexInputAttributes.push_back(
+			{
+				.location = 0,
+				.binding = 0,
+				.format = VK_FORMAT_R32G32_SFLOAT,
+				.offset = offsetof(Vertex, position)
+			});
+		pipelineCiPack.vertexInputAttributes.push_back(
+			{
+				.location = 1,
+				.binding = 0,
+				.format = VK_FORMAT_R32G32B32A32_SFLOAT,
+				.offset = offsetof(Vertex, color)
+			});
 
 		// VkViewport: 让标准化设备坐标覆盖整个交换链图像。
 		pipelineCiPack.viewports.push_back({ 0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f });
@@ -70,19 +110,23 @@ void CreatePipeline()
 	{
 		graphicsBase::Base().AddCallback_CreateSwapchain(Create);
 		graphicsBase::Base().AddCallback_DestroySwapchain(Destroy);
+		graphicsBase::Base().AddCallback_DestroyDevice([] {
+			vert.Destroy();
+			frag.Destroy();
+		});
 		callbacksAdded = true;
 	}
 	Create();
 }
 
-int main()
+int Run()
 {
-	if (!InitializeWindow({ 1280, 720 }))
-		return -1;
-
 	const auto& [renderPass, framebuffers] = RenderPassAndFramebuffers();
 	CreateLayout();
 	CreatePipeline();
+	vertexBuffer vertexBuffer_triangle;
+	if (vertexBuffer_triangle.Create(vertices_triangle, sizeof(vertices_triangle)))
+		return -1;
 
 	// VkFence: 渲染提交完成后由 GPU 置位，CPU 在循环末尾等待并重置它。
 	fence fence;
@@ -122,6 +166,8 @@ int main()
 
 		// VkPipeline: 绑定图形管线后，后续 draw 命令使用该管线状态执行。
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_triangle);
+		VkDeviceSize vertexBufferOffset = 0;
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffer_triangle.Address(), &vertexBufferOffset);
 		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
 		renderPass.CmdEnd(commandBuffer);
@@ -139,6 +185,18 @@ int main()
 		fence.WaitAndReset();
 	}
 
-	TerminateWindow();
 	return 0;
+}
+
+int main()
+{
+	if (!InitializeWindow({ 1280, 720 }))
+	{
+		TerminateWindow();
+		return -1;
+	}
+
+	const int result = Run();
+	TerminateWindow();
+	return result;
 }

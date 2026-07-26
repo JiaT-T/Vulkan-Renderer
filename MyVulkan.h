@@ -1,5 +1,6 @@
 #pragma once
 #include "VKBase.h"
+#include <cstring>
 
 using namespace vulkan;
 
@@ -87,6 +88,189 @@ public:
 	}
 };
 
+class vertexBuffer
+{
+private:
+	VkBuffer handle = VK_NULL_HANDLE;
+	VkDeviceMemory memory = VK_NULL_HANDLE;
+
+	static uint32_t FindMemoryType(uint32_t memoryTypeBits, VkMemoryPropertyFlags requiredProperties)
+	{
+		const auto& memoryProperties = graphicsBase::Base().PhysicalDeviceMemoryProperties();
+		for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
+			if ((memoryTypeBits & (1u << i)) &&
+				(memoryProperties.memoryTypes[i].propertyFlags & requiredProperties) == requiredProperties)
+				return i;
+		return UINT32_MAX;
+	}
+
+	static VkResult CreateBufferAndMemory(VkDeviceSize size, VkBufferUsageFlags usage,
+		VkMemoryPropertyFlags memoryProperties, VkBuffer& buffer, VkDeviceMemory& deviceMemory)
+	{
+		VkBufferCreateInfo bufferCreateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = size,
+			.usage = usage,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE
+		};
+		VkResult result = vkCreateBuffer(graphicsBase::Base().Device(), &bufferCreateInfo, nullptr, &buffer);
+		if (result)
+		{
+			outStream << std::format("[ vertexBuffer ] ERROR\nFailed to create a buffer!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+
+		VkMemoryRequirements memoryRequirements;
+		vkGetBufferMemoryRequirements(graphicsBase::Base().Device(), buffer, &memoryRequirements);
+		const uint32_t memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, memoryProperties);
+		if (memoryTypeIndex == UINT32_MAX)
+		{
+			outStream << "[ vertexBuffer ] ERROR\nFailed to find a suitable memory type!\n";
+			vkDestroyBuffer(graphicsBase::Base().Device(), buffer, nullptr);
+			buffer = VK_NULL_HANDLE;
+			return VK_ERROR_FEATURE_NOT_PRESENT;
+		}
+
+		VkMemoryAllocateInfo allocateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.allocationSize = memoryRequirements.size,
+			.memoryTypeIndex = memoryTypeIndex
+		};
+		result = vkAllocateMemory(graphicsBase::Base().Device(), &allocateInfo, nullptr, &deviceMemory);
+		if (result)
+		{
+			outStream << std::format("[ vertexBuffer ] ERROR\nFailed to allocate buffer memory!\nError code: {}\n", string_VkResult(result));
+			vkDestroyBuffer(graphicsBase::Base().Device(), buffer, nullptr);
+			buffer = VK_NULL_HANDLE;
+			return result;
+		}
+
+		result = vkBindBufferMemory(graphicsBase::Base().Device(), buffer, deviceMemory, 0);
+		if (result)
+		{
+			outStream << std::format("[ vertexBuffer ] ERROR\nFailed to bind buffer memory!\nError code: {}\n", string_VkResult(result));
+			vkDestroyBuffer(graphicsBase::Base().Device(), buffer, nullptr);
+			vkFreeMemory(graphicsBase::Base().Device(), deviceMemory, nullptr);
+			buffer = VK_NULL_HANDLE;
+			deviceMemory = VK_NULL_HANDLE;
+		}
+		return result;
+	}
+
+	static VkResult CopyBuffer(VkBuffer source, VkBuffer destination, VkDeviceSize size)
+	{
+		VkCommandPool copyCommandPool = VK_NULL_HANDLE;
+		VkCommandPoolCreateInfo poolCreateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+			.queueFamilyIndex = graphicsBase::Base().QueueFamilyIndex_Graphics()
+		};
+		VkResult result = vkCreateCommandPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &copyCommandPool);
+		if (result)
+			return result;
+
+		VkCommandBuffer copyCommandBuffer = VK_NULL_HANDLE;
+		VkCommandBufferAllocateInfo allocateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = copyCommandPool,
+			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1
+		};
+		result = vkAllocateCommandBuffers(graphicsBase::Base().Device(), &allocateInfo, &copyCommandBuffer);
+		if (!result)
+		{
+			VkCommandBufferBeginInfo beginInfo =
+			{
+				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+				.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+			};
+			result = vkBeginCommandBuffer(copyCommandBuffer, &beginInfo);
+		}
+		if (!result)
+		{
+			VkBufferCopy copyRegion = { .size = size };
+			vkCmdCopyBuffer(copyCommandBuffer, source, destination, 1, &copyRegion);
+			result = vkEndCommandBuffer(copyCommandBuffer);
+		}
+		if (!result)
+		{
+			VkSubmitInfo submitInfo =
+			{
+				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+				.commandBufferCount = 1,
+				.pCommandBuffers = &copyCommandBuffer
+			};
+			result = vkQueueSubmit(graphicsBase::Base().Queue_Graphics(), 1, &submitInfo, VK_NULL_HANDLE);
+		}
+		if (!result)
+			result = vkQueueWaitIdle(graphicsBase::Base().Queue_Graphics());
+
+		vkDestroyCommandPool(graphicsBase::Base().Device(), copyCommandPool, nullptr);
+		if (result)
+			outStream << std::format("[ vertexBuffer ] ERROR\nFailed to transfer vertex data!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+
+public:
+	vertexBuffer() = default;
+	vertexBuffer(const vertexBuffer&) = delete;
+	vertexBuffer& operator=(const vertexBuffer&) = delete;
+	~vertexBuffer() { Destroy(); }
+
+	DefineHandleTypeOperator;
+	DefineAddressFunction;
+
+	VkResult Create(const void* data, VkDeviceSize size)
+	{
+		Destroy();
+
+		VkBuffer stagingBuffer = VK_NULL_HANDLE;
+		VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+		VkResult result = CreateBufferAndMemory(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer, stagingMemory);
+		if (result)
+			return result;
+
+		void* mappedMemory = nullptr;
+		result = vkMapMemory(graphicsBase::Base().Device(), stagingMemory, 0, size, 0, &mappedMemory);
+		if (!result)
+		{
+			std::memcpy(mappedMemory, data, size_t(size));
+			vkUnmapMemory(graphicsBase::Base().Device(), stagingMemory);
+			result = CreateBufferAndMemory(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, handle, memory);
+		}
+		if (!result)
+			result = CopyBuffer(stagingBuffer, handle, size);
+
+		vkDestroyBuffer(graphicsBase::Base().Device(), stagingBuffer, nullptr);
+		vkFreeMemory(graphicsBase::Base().Device(), stagingMemory, nullptr);
+
+		if (result)
+			Destroy();
+		return result;
+	}
+
+	void Destroy()
+	{
+		if (handle)
+		{
+			vkDestroyBuffer(graphicsBase::Base().Device(), handle, nullptr);
+			handle = VK_NULL_HANDLE;
+		}
+		if (memory)
+		{
+			vkFreeMemory(graphicsBase::Base().Device(), memory, nullptr);
+			memory = VK_NULL_HANDLE;
+		}
+	}
+};
+
 class pipelineLayout
 {
 private:
@@ -130,7 +314,10 @@ struct graphicsPipelineCreateInfoPack
 		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO
 	};
 
-	// VkPipelineVertexInputStateCreateInfo: 描述顶点缓冲输入；本节没有顶点缓冲，所以保持空。
+	std::vector<VkVertexInputBindingDescription> vertexInputBindings;
+	std::vector<VkVertexInputAttributeDescription> vertexInputAttributes;
+
+	// VkPipelineVertexInputStateCreateInfo: 描述顶点缓冲区中的数据步长，以及 shader 各输入位置如何读取属性。
 	VkPipelineVertexInputStateCreateInfo vertexInputStateCi =
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
@@ -182,6 +369,11 @@ struct graphicsPipelineCreateInfoPack
 
 	void UpdateAllArrays()
 	{
+		vertexInputStateCi.vertexBindingDescriptionCount = uint32_t(vertexInputBindings.size());
+		vertexInputStateCi.pVertexBindingDescriptions = vertexInputBindings.data();
+		vertexInputStateCi.vertexAttributeDescriptionCount = uint32_t(vertexInputAttributes.size());
+		vertexInputStateCi.pVertexAttributeDescriptions = vertexInputAttributes.data();
+
 		viewportStateCi.viewportCount = uint32_t(viewports.size());
 		viewportStateCi.pViewports = viewports.data();
 		viewportStateCi.scissorCount = uint32_t(scissors.size());
@@ -415,6 +607,7 @@ const auto& CreateRpwf_Screen()
 	CreateFramebuffers();
 	graphicsBase::Base().AddCallback_CreateSwapchain(CreateFramebuffers);
 	graphicsBase::Base().AddCallback_DestroySwapchain(DestroyFramebuffers);
+	graphicsBase::Base().AddCallback_DestroyDevice([] { rpwf.renderPass.Destroy(); });
 	initialized = true;
 	return rpwf;
 }

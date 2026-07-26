@@ -13,7 +13,7 @@
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "cacheVariables": {
-        "CMAKE_GENERATOR_INSTANCE": "C:/Program Files/Microsoft Visual Studio/18/Insiders,version=18.4.11519.219",
+        "CMAKE_GENERATOR_INSTANCE": "C:/Program Files/Microsoft Visual Studio/18/Insiders",
         "CMAKE_TOOLCHAIN_FILE": "D:/Computer Graphics/Vulkan/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_TARGET_TRIPLET": "x64-windows"
       },
