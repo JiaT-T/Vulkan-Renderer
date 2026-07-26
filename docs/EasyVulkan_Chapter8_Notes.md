@@ -7,6 +7,7 @@
 ```text
 --example=offscreen
 --example=depth
+--example=depth-off
 --example=depth-raw
 --example=depth-linear
 --example=deferred
@@ -254,6 +255,7 @@ Far  = 50.0
 
 ```text
 --example=depth        彩色场景
+--example=depth-off    同一场景关闭 Depth Test/Write 的错误对照
 --example=depth-raw    原始非线性深度
 --example=depth-linear 线性化并归一化的深度
 ```

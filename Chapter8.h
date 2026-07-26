@@ -6,6 +6,7 @@ enum class RenderExample
 	Forward,
 	Offscreen,
 	DepthTest,
+	DepthDisabled,
 	DepthRaw,
 	DepthLinear,
 	Deferred,

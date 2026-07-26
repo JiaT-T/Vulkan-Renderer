@@ -64,7 +64,7 @@ const uint16_t cubeIndices[] =
 bool IsDepthExample(RenderExample example)
 {
 	return example == RenderExample::DepthTest || example == RenderExample::DepthRaw ||
-		example == RenderExample::DepthLinear;
+		example == RenderExample::DepthLinear || example == RenderExample::DepthDisabled;
 }
 
 bool IsDeferredExample(RenderExample example)
@@ -160,7 +160,7 @@ VkResult CreateNoVertexPipeline(shaderModule& vertexShader, shaderModule& fragme
 
 VkResult CreateDepthScenePipeline(shaderModule& vertexShader, shaderModule& fragmentShader,
 	VkPipelineLayout layout, VkRenderPass renderPass, pipeline& output, VkExtent2D extent,
-	uint32_t colorAttachmentCount = 1)
+	uint32_t colorAttachmentCount = 1, bool enableDepth = true)
 {
 	VkPipelineShaderStageCreateInfo stages[] =
 	{
@@ -182,8 +182,8 @@ VkResult CreateDepthScenePipeline(shaderModule& vertexShader, shaderModule& frag
 	pack.rasterizationStateCi.cullMode = VK_CULL_MODE_BACK_BIT;
 	pack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	pack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-	pack.depthStencilStateCi.depthTestEnable = VK_TRUE;
-	pack.depthStencilStateCi.depthWriteEnable = VK_TRUE;
+	pack.depthStencilStateCi.depthTestEnable = enableDepth;
+	pack.depthStencilStateCi.depthWriteEnable = enableDepth;
 	pack.depthStencilStateCi.depthCompareOp = VK_COMPARE_OP_LESS;
 	pack.depthStencilStateCi.maxDepthBounds = 1.0f;
 	for (uint32_t i = 0; i < colorAttachmentCount; i++)
@@ -351,6 +351,7 @@ public:
 		offscreenPipeline.Destroy();
 		fullscreenPipeline.Destroy();
 		depthScenePipeline.Destroy();
+		depthDisabledPipeline.Destroy();
 		depthVisualizePipeline.Destroy();
 		deferredGeometryPipeline.Destroy();
 		deferredCompositionPipeline.Destroy();
@@ -415,6 +416,7 @@ private:
 	renderPass depthRenderPass;
 	framebuffer depthFramebuffer;
 	pipeline depthScenePipeline;
+	pipeline depthDisabledPipeline;
 	pipeline depthVisualizePipeline;
 	pipelineLayout depthScenePipelineLayout;
 	descriptorSetLayout depthSceneDescriptorSetLayout;
@@ -1575,6 +1577,9 @@ private:
 		VkResult result = CreateDepthScenePipeline(depthSceneVertexShader, depthSceneFragmentShader,
 			depthScenePipelineLayout, depthRenderPass, depthScenePipeline, windowSize);
 		if (!result)
+			result = CreateDepthScenePipeline(depthSceneVertexShader, depthSceneFragmentShader,
+				depthScenePipelineLayout, depthRenderPass, depthDisabledPipeline, windowSize, 1, false);
+		if (!result)
 			result = CreateNoVertexPipeline(fullscreenVertexShader, fullscreenFragmentShader,
 				fullscreenPipelineLayout, screenRenderPass, 0, fullscreenPipeline, windowSize, { opaqueBlend });
 		if (!result)
@@ -1715,7 +1720,8 @@ private:
 		depthClears[0].color = { { 0.02f, 0.025f, 0.04f, 1.0f } };
 		depthClears[1].depthStencil = { 1.0f, 0 };
 		BeginRenderPass(commandBuffer, depthRenderPass, depthFramebuffer, windowSize, depthClears);
-		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, depthScenePipeline);
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+			example == RenderExample::DepthDisabled ? VkPipeline(depthDisabledPipeline) : VkPipeline(depthScenePipeline));
 		VkBuffer vertexBuffer = cubeVertexBuffer;
 		VkDeviceSize vertexOffset = 0;
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &vertexOffset);
@@ -1798,6 +1804,7 @@ bool ParseRenderExample(std::string_view argument, RenderExample& example)
 	if (value == "forward") example = RenderExample::Forward;
 	else if (value == "offscreen") example = RenderExample::Offscreen;
 	else if (value == "depth") example = RenderExample::DepthTest;
+	else if (value == "depth-off") example = RenderExample::DepthDisabled;
 	else if (value == "depth-raw") example = RenderExample::DepthRaw;
 	else if (value == "depth-linear") example = RenderExample::DepthLinear;
 	else if (value == "deferred") example = RenderExample::Deferred;
@@ -1830,6 +1837,7 @@ const char* RenderExampleName(RenderExample example)
 	{
 	case RenderExample::Offscreen: return "Offscreen";
 	case RenderExample::DepthTest: return "DepthTest";
+	case RenderExample::DepthDisabled: return "DepthDisabled";
 	case RenderExample::DepthRaw: return "DepthRaw";
 	case RenderExample::DepthLinear: return "DepthLinear";
 	case RenderExample::Deferred: return "Deferred";
