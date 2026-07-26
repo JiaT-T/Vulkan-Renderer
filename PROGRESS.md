@@ -39,6 +39,18 @@
 - Validation: Not run.
 - Notes: The existing transparent nettle PNG is loaded twice. The straight copy remains unchanged; the premultiplied copy converts each 8-bit RGB channel with `(RGB*A+127)/255` before mip 0 is uploaded, so all later mip levels filter premultiplied data. The three panels are: straight texture + straight blend, straight texture + intentionally wrong premultiplied blend, and premultiplied texture + correct premultiplied blend. Color factors are respectively `SRC_ALPHA` or `ONE`, both with `ONE_MINUS_SRC_ALPHA`; alpha uses `ONE` and `ONE_MINUS_SRC_ALPHA`. Panels do not overlap, while the notes retain the requirement that real transparent objects still need back-to-front sorting.
 
+## Ch8-5 sRGB and HDR
+- Status: Implemented; user verification pending
+- Files changed: `VKBase.h`, `Chapter8.cpp`, `main.cpp`, `shader/ColorSpaceTest.frag.shader`, `shader/HDRScene.frag.shader`, `shader/ToneMapping.frag.shader`, `PROGRESS.md`
+- Shader: Added encoded-vs-linear averaging comparison, an HDR gradient/highlight source with values above 1.0, ACES-approximate SDR tone mapping, conditional sRGB encoding, scRGB linear output, and Rec.709→Rec.2020 plus ST.2084 PQ output.
+- Build: Not run; validation requirements were explicitly excluded by the user.
+- SDR result: Not run. Select `--example=srgb` or `--example=sdr`; `--hdr=sdr` forces the SDR route.
+- HDR capability: Runtime enumeration and logging of every surface format/color-space pair is implemented. `VK_EXT_swapchain_colorspace` is enabled only if advertised. The preferred HDR candidates are `R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR` and 10-bit UNORM + `HDR10_ST2084`.
+- HDR runtime: Not run. Select `--example=hdr --hdr=auto` or `--hdr=request`. Actual display/OS/driver HDR activation remains unknown.
+- Fallback: Missing color-space extension or HDR surface candidate logs a clear message and selects an SDR surface instead of failing initialization.
+- Validation: Not run.
+- Notes: Default SDR swapchain selection now prefers an SRGB attachment, and the existing Ch7 color texture/boot image use SRGB formats. Data attachments (Normal, Position, Depth) remain non-SRGB. Scene and lighting values stay linear; `R16G16B16A16_SFLOAT` stores HDR values above 1.0. SDR output tone maps and relies on automatic SRGB attachment encoding when available, otherwise the shader performs one manual encoding—never both.
+
 ## Ch6-0 Modern Feature Queries
 - Status: Complete
 - Files changed: `VKStart.h`, `helper.h`, `VKBase.h`, `MyVulkan.h`, `main.cpp`, `PROGRESS.md`

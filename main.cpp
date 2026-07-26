@@ -275,7 +275,7 @@ VkResult ShowBootImage(const char* filepath)
 		return VK_ERROR_INITIALIZATION_FAILED;
 	}
 
-	const VkFormat sourceFormat = VK_FORMAT_R8G8B8A8_UNORM;
+	const VkFormat sourceFormat = VK_FORMAT_R8G8B8A8_SRGB;
 	VkFormatProperties sourceFormatProperties;
 	VkFormatProperties destinationFormatProperties;
 	vkGetPhysicalDeviceFormatProperties(graphicsBase::Base().PhysicalDevice(), sourceFormat, &sourceFormatProperties);
@@ -402,7 +402,7 @@ int Run(bool selfTest)
 		if (uniformBuffer.CreateHostVisible(sizeof(UniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
 			return -1;
 	texture2d texture_scene;
-	if (texture_scene.Create("textures/uv_orientation_test.png"))
+	if (texture_scene.Create("textures/uv_orientation_test.png", VK_FORMAT_R8G8B8A8_SRGB))
 		return -1;
 
 	VkDescriptorPoolSize poolSizes[] =
@@ -654,6 +654,16 @@ int main(int argc, char* argv[])
 	// 第八章示例按教程结构使用传统 Render Pass；Forward 模式仍保留第六章三路径切换。
 	if (renderExample != RenderExample::Forward)
 		requestedRenderMode = RenderMode::LegacyRenderPass;
+	const bool requestHdrFormats = hdrPreference == HdrPreference::RequestHDR ||
+		(renderExample == RenderExample::HDR && hdrPreference == HdrPreference::Auto);
+	if (requestHdrFormats)
+	{
+		const char* colorSpaceExtension[] = { VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME };
+		if (!graphicsBase::Base().CheckInstanceExtensions(colorSpaceExtension) && colorSpaceExtension[0])
+			graphicsBase::Base().AddInstanceExtension(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+		else
+			outStream << "[ Ch8-5 ] VK_EXT_swapchain_colorspace is unavailable; HDR will fall back to SDR.\n";
+	}
 	graphicsBase::Base().RequestRenderMode(requestedRenderMode);
 
 	if (!InitializeWindow({ 1280, 720 }))
