@@ -41,12 +41,12 @@
 - Notes: The renderer has one frame in flight, so it owns one persistently mapped host-coherent UBO and one descriptor set. Binding 0 is a vertex-stage Uniform Buffer containing aligned Model/View/Projection matrices. The frame fence completes before the next UBO write. Vulkan projection Y is flipped explicitly.
 
 ## Ch7-6 Image Copy
-- Status: Not started
-- Files changed: None
-- Build: Not run
-- Runtime: Not run
-- Validation: Not run
-- Notes: None
+- Status: Complete
+- Files changed: `CMakeLists.txt`, `stb_image.cpp`, `MyVulkan.h`, `main.cpp`, `PROGRESS.md`
+- Build: GLSL compilation and `spirv-val` passed; CMake regenerated and Debug x64 build succeeded with the stb implementation translation unit.
+- Runtime: `viking_room.png` was loaded as RGBA8, copied from a host staging buffer into a device-local image, then linearly blitted from its native extent to the swapchain extent and visibly presented before the instanced scene.
+- Validation: Khronos Validation loaded; no ERROR, VUID, or image-layout warning was emitted during the logged run and graceful shutdown.
+- Notes: Source and destination format features are checked before linear blit. Barriers use TOP_OF_PIPE→TRANSFER for undefined destinations, TRANSFER→TRANSFER for copy-to-blit visibility, and TRANSFER→BOTTOM_OF_PIPE before present. The image view is destroyed before its image, and the image before its memory.
 
 ## Ch7-7 Texture
 - Status: Not started

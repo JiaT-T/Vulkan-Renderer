@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cmath>
 #include <array>
+#include <thread>
 
 using namespace vulkan;
 using namespace easyVulkan;
@@ -214,8 +215,119 @@ void CreatePipeline()
 	Create();
 }
 
+VkResult ShowBootImage(const char* filepath)
+{
+	int width = 0;
+	int height = 0;
+	int channelCount = 0;
+	stbi_uc* pixels = stbi_load(filepath, &width, &height, &channelCount, STBI_rgb_alpha);
+	if (!pixels || width <= 0 || height <= 0)
+	{
+		outStream << std::format("[ ShowBootImage ] ERROR\nFailed to load image: {}\n", filepath);
+		if (pixels)
+			stbi_image_free(pixels);
+		return VK_ERROR_INITIALIZATION_FAILED;
+	}
+
+	const VkFormat sourceFormat = VK_FORMAT_R8G8B8A8_UNORM;
+	VkFormatProperties sourceFormatProperties;
+	VkFormatProperties destinationFormatProperties;
+	vkGetPhysicalDeviceFormatProperties(graphicsBase::Base().PhysicalDevice(), sourceFormat, &sourceFormatProperties);
+	vkGetPhysicalDeviceFormatProperties(graphicsBase::Base().PhysicalDevice(),
+		graphicsBase::Base().SwapchainCreateInfo().imageFormat, &destinationFormatProperties);
+	if (!(sourceFormatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
+		!(sourceFormatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ||
+		!(destinationFormatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) ||
+		!(graphicsBase::Base().SwapchainCreateInfo().imageUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+	{
+		outStream << "[ ShowBootImage ] ERROR\nRequired linear blit features are not supported!\n";
+		stbi_image_free(pixels);
+		return VK_ERROR_FORMAT_NOT_SUPPORTED;
+	}
+
+	const VkDeviceSize imageSize = VkDeviceSize(width) * VkDeviceSize(height) * STBI_rgb_alpha;
+	bufferMemory stagingBuffer;
+	VkResult result = stagingBuffer.CreateHostVisible(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+	if (!result)
+		result = stagingBuffer.Write(pixels, imageSize);
+	stbi_image_free(pixels);
+	if (result)
+		return result;
+
+	imageMemory sourceImage;
+	const VkExtent3D sourceExtent = { uint32_t(width), uint32_t(height), 1 };
+	result = sourceImage.Create(sourceExtent, 1, sourceFormat, VK_IMAGE_TILING_OPTIMAL,
+		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	if (!result)
+		result = sourceImage.CreateView();
+	if (!result)
+		result = ExecuteGraphicsCommands([&](VkCommandBuffer commandBuffer) {
+			const VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+			imageOperation::CmdTransitionLayout(commandBuffer, sourceImage,
+				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				0, VK_ACCESS_TRANSFER_WRITE_BIT, range);
+			imageOperation::CmdCopyBufferToImage(commandBuffer, stagingBuffer, sourceImage, sourceExtent);
+			imageOperation::CmdTransitionLayout(commandBuffer, sourceImage,
+				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, range);
+		});
+	if (result)
+		return result;
+
+	semaphore imageAvailable;
+	semaphore renderingFinished;
+	fence transferFinished;
+	commandPool transferCommandPool(graphicsBase::Base().QueueFamilyIndex_Graphics(), VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+	commandBuffer transferCommandBuffer;
+	if (transferCommandPool.AllocateBuffers(transferCommandBuffer))
+		return VK_ERROR_INITIALIZATION_FAILED;
+	if ((result = graphicsBase::Base().SwapImage(imageAvailable)))
+		return result;
+	if ((result = transferCommandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)))
+		return result;
+
+	const VkImage swapchainImage = graphicsBase::Base().SwapchainImage(graphicsBase::Base().CurrentImageIndex());
+	const VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+	imageOperation::CmdTransitionLayout(transferCommandBuffer, swapchainImage,
+		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0, VK_ACCESS_TRANSFER_WRITE_BIT, range);
+	imageOperation::CmdBlitImage(transferCommandBuffer, sourceImage, swapchainImage,
+		{ width, height, 1 },
+		{ int32_t(windowSize.width), int32_t(windowSize.height), 1 });
+	imageOperation::CmdTransitionLayout(transferCommandBuffer, swapchainImage,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		VK_ACCESS_TRANSFER_WRITE_BIT, 0, range);
+	if ((result = transferCommandBuffer.End()))
+		return result;
+	if ((result = graphicsBase::Base().SubmitCommandBuffer_Graphics(transferCommandBuffer,
+		imageAvailable, renderingFinished, transferFinished, VK_PIPELINE_STAGE_TRANSFER_BIT)))
+		return result;
+	if ((result = graphicsBase::Base().PresentImage(renderingFinished)))
+		return result;
+	if ((result = transferFinished.WaitAndReset()))
+		return result;
+
+	outStream << std::format("[ Ch7-6 ] Blitted {}x{} image to {}x{} swapchain image.\n",
+		width, height, windowSize.width, windowSize.height);
+	return VK_SUCCESS;
+}
+
 int Run()
 {
+	if (ShowBootImage("textures/viking_room.png"))
+		return -1;
+	const double bootImageEndTime = glfwGetTime() + 8.0;
+	while (!glfwWindowShouldClose(pWindow) && glfwGetTime() < bootImageEndTime)
+	{
+		glfwPollEvents();
+		std::this_thread::sleep_for(std::chrono::milliseconds(16));
+	}
+
 	const auto& [renderPass, framebuffers] = RenderPassAndFramebuffers();
 	CreateLayout();
 	CreatePipeline();

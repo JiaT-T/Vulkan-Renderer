@@ -88,6 +88,70 @@ public:
 	}
 };
 
+inline uint32_t FindMemoryType(uint32_t memoryTypeBits, VkMemoryPropertyFlags requiredProperties)
+{
+	const auto& memoryProperties = graphicsBase::Base().PhysicalDeviceMemoryProperties();
+	for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
+		if ((memoryTypeBits & (1u << i)) &&
+			(memoryProperties.memoryTypes[i].propertyFlags & requiredProperties) == requiredProperties)
+			return i;
+	return UINT32_MAX;
+}
+
+inline VkResult ExecuteGraphicsCommands(const std::function<void(VkCommandBuffer)>& recordCommands)
+{
+	VkCommandPool commandPool = VK_NULL_HANDLE;
+	VkCommandPoolCreateInfo poolCreateInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+		.queueFamilyIndex = graphicsBase::Base().QueueFamilyIndex_Graphics()
+	};
+	VkResult result = vkCreateCommandPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &commandPool);
+	if (result)
+		return result;
+
+	VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+	VkCommandBufferAllocateInfo allocateInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = commandPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1
+	};
+	result = vkAllocateCommandBuffers(graphicsBase::Base().Device(), &allocateInfo, &commandBuffer);
+	if (!result)
+	{
+		VkCommandBufferBeginInfo beginInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+		};
+		result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
+	}
+	if (!result)
+	{
+		recordCommands(commandBuffer);
+		result = vkEndCommandBuffer(commandBuffer);
+	}
+	if (!result)
+	{
+		VkSubmitInfo submitInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.commandBufferCount = 1,
+			.pCommandBuffers = &commandBuffer
+		};
+		result = vkQueueSubmit(graphicsBase::Base().Queue_Graphics(), 1, &submitInfo, VK_NULL_HANDLE);
+	}
+	if (!result)
+		result = vkQueueWaitIdle(graphicsBase::Base().Queue_Graphics());
+	vkDestroyCommandPool(graphicsBase::Base().Device(), commandPool, nullptr);
+	if (result)
+		outStream << std::format("[ ExecuteGraphicsCommands ] ERROR\nFailed to execute commands!\nError code: {}\n", string_VkResult(result));
+	return result;
+}
+
 class bufferMemory
 {
 private:
@@ -95,16 +159,6 @@ private:
 	VkDeviceMemory memory = VK_NULL_HANDLE;
 	VkDeviceSize size = 0;
 	void* mappedMemory = nullptr;
-
-	static uint32_t FindMemoryType(uint32_t memoryTypeBits, VkMemoryPropertyFlags requiredProperties)
-	{
-		const auto& memoryProperties = graphicsBase::Base().PhysicalDeviceMemoryProperties();
-		for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
-			if ((memoryTypeBits & (1u << i)) &&
-				(memoryProperties.memoryTypes[i].propertyFlags & requiredProperties) == requiredProperties)
-				return i;
-		return UINT32_MAX;
-	}
 
 	static VkResult CreateBufferAndMemory(VkDeviceSize size, VkBufferUsageFlags usage,
 		VkMemoryPropertyFlags memoryProperties, VkBuffer& buffer, VkDeviceMemory& deviceMemory)
@@ -163,55 +217,10 @@ private:
 
 	static VkResult CopyBuffer(VkBuffer source, VkBuffer destination, VkDeviceSize size)
 	{
-		VkCommandPool copyCommandPool = VK_NULL_HANDLE;
-		VkCommandPoolCreateInfo poolCreateInfo =
-		{
-			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-			.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-			.queueFamilyIndex = graphicsBase::Base().QueueFamilyIndex_Graphics()
-		};
-		VkResult result = vkCreateCommandPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &copyCommandPool);
-		if (result)
-			return result;
-
-		VkCommandBuffer copyCommandBuffer = VK_NULL_HANDLE;
-		VkCommandBufferAllocateInfo allocateInfo =
-		{
-			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-			.commandPool = copyCommandPool,
-			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-			.commandBufferCount = 1
-		};
-		result = vkAllocateCommandBuffers(graphicsBase::Base().Device(), &allocateInfo, &copyCommandBuffer);
-		if (!result)
-		{
-			VkCommandBufferBeginInfo beginInfo =
-			{
-				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-				.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-			};
-			result = vkBeginCommandBuffer(copyCommandBuffer, &beginInfo);
-		}
-		if (!result)
-		{
+		VkResult result = ExecuteGraphicsCommands([=](VkCommandBuffer commandBuffer) {
 			VkBufferCopy copyRegion = { .size = size };
-			vkCmdCopyBuffer(copyCommandBuffer, source, destination, 1, &copyRegion);
-			result = vkEndCommandBuffer(copyCommandBuffer);
-		}
-		if (!result)
-		{
-			VkSubmitInfo submitInfo =
-			{
-				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-				.commandBufferCount = 1,
-				.pCommandBuffers = &copyCommandBuffer
-			};
-			result = vkQueueSubmit(graphicsBase::Base().Queue_Graphics(), 1, &submitInfo, VK_NULL_HANDLE);
-		}
-		if (!result)
-			result = vkQueueWaitIdle(graphicsBase::Base().Queue_Graphics());
-
-		vkDestroyCommandPool(graphicsBase::Base().Device(), copyCommandPool, nullptr);
+			vkCmdCopyBuffer(commandBuffer, source, destination, 1, &copyRegion);
+		});
 		if (result)
 			outStream << std::format("[ bufferMemory ] ERROR\nFailed to transfer buffer data!\nError code: {}\n", string_VkResult(result));
 		return result;
@@ -312,6 +321,180 @@ public:
 		size = 0;
 	}
 };
+
+class imageMemory
+{
+private:
+	VkImage handle = VK_NULL_HANDLE;
+	VkDeviceMemory memory = VK_NULL_HANDLE;
+	VkImageView view = VK_NULL_HANDLE;
+	VkExtent3D extent = {};
+	VkFormat format = VK_FORMAT_UNDEFINED;
+	uint32_t mipLevels = 1;
+
+public:
+	imageMemory() = default;
+	imageMemory(const imageMemory&) = delete;
+	imageMemory& operator=(const imageMemory&) = delete;
+	~imageMemory() { Destroy(); }
+
+	DefineHandleTypeOperator;
+	DefineAddressFunction;
+	VkImageView View() const { return view; }
+	const VkExtent3D& Extent() const { return extent; }
+	VkFormat Format() const { return format; }
+	uint32_t MipLevels() const { return mipLevels; }
+
+	VkResult Create(VkExtent3D extent, uint32_t mipLevels, VkFormat format, VkImageTiling tiling,
+		VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties)
+	{
+		Destroy();
+		this->extent = extent;
+		this->format = format;
+		this->mipLevels = mipLevels;
+		VkImageCreateInfo createInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = format,
+			.extent = extent,
+			.mipLevels = mipLevels,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = tiling,
+			.usage = usage,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+		};
+		VkResult result = vkCreateImage(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+		if (result)
+		{
+			outStream << std::format("[ imageMemory ] ERROR\nFailed to create an image!\nError code: {}\n", string_VkResult(result));
+			return result;
+		}
+
+		VkMemoryRequirements memoryRequirements;
+		vkGetImageMemoryRequirements(graphicsBase::Base().Device(), handle, &memoryRequirements);
+		const uint32_t memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, memoryProperties);
+		if (memoryTypeIndex == UINT32_MAX)
+		{
+			outStream << "[ imageMemory ] ERROR\nFailed to find a suitable image memory type!\n";
+			Destroy();
+			return VK_ERROR_FEATURE_NOT_PRESENT;
+		}
+		VkMemoryAllocateInfo allocateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.allocationSize = memoryRequirements.size,
+			.memoryTypeIndex = memoryTypeIndex
+		};
+		result = vkAllocateMemory(graphicsBase::Base().Device(), &allocateInfo, nullptr, &memory);
+		if (!result)
+			result = vkBindImageMemory(graphicsBase::Base().Device(), handle, memory, 0);
+		if (result)
+		{
+			outStream << std::format("[ imageMemory ] ERROR\nFailed to allocate or bind image memory!\nError code: {}\n", string_VkResult(result));
+			Destroy();
+		}
+		return result;
+	}
+
+	VkResult CreateView(VkImageAspectFlags aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT)
+	{
+		if (!handle)
+			return VK_ERROR_INITIALIZATION_FAILED;
+		if (view)
+			vkDestroyImageView(graphicsBase::Base().Device(), view, nullptr);
+		VkImageViewCreateInfo createInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = handle,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = format,
+			.subresourceRange = { aspectFlags, 0, mipLevels, 0, 1 }
+		};
+		VkResult result = vkCreateImageView(graphicsBase::Base().Device(), &createInfo, nullptr, &view);
+		if (result)
+			outStream << std::format("[ imageMemory ] ERROR\nFailed to create an image view!\nError code: {}\n", string_VkResult(result));
+		return result;
+	}
+
+	void Destroy()
+	{
+		if (view)
+		{
+			vkDestroyImageView(graphicsBase::Base().Device(), view, nullptr);
+			view = VK_NULL_HANDLE;
+		}
+		if (handle)
+		{
+			vkDestroyImage(graphicsBase::Base().Device(), handle, nullptr);
+			handle = VK_NULL_HANDLE;
+		}
+		if (memory)
+		{
+			vkFreeMemory(graphicsBase::Base().Device(), memory, nullptr);
+			memory = VK_NULL_HANDLE;
+		}
+		extent = {};
+		format = VK_FORMAT_UNDEFINED;
+		mipLevels = 1;
+	}
+};
+
+namespace imageOperation
+{
+inline void CmdTransitionLayout(VkCommandBuffer commandBuffer, VkImage image,
+	VkImageLayout oldLayout, VkImageLayout newLayout,
+	VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage,
+	VkAccessFlags sourceAccess, VkAccessFlags destinationAccess,
+	VkImageSubresourceRange subresourceRange)
+{
+	VkImageMemoryBarrier barrier =
+	{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = sourceAccess,
+		.dstAccessMask = destinationAccess,
+		.oldLayout = oldLayout,
+		.newLayout = newLayout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = image,
+		.subresourceRange = subresourceRange
+	};
+	vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0,
+		0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+inline void CmdCopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer source, VkImage destination,
+	VkExtent3D extent, uint32_t mipLevel = 0)
+{
+	VkBufferImageCopy region =
+	{
+		.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, mipLevel, 0, 1 },
+		.imageExtent = extent
+	};
+	vkCmdCopyBufferToImage(commandBuffer, source, destination,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+}
+
+inline void CmdBlitImage(VkCommandBuffer commandBuffer, VkImage source, VkImage destination,
+	VkOffset3D sourceEnd, VkOffset3D destinationEnd, VkFilter filter = VK_FILTER_LINEAR,
+	uint32_t sourceMipLevel = 0, uint32_t destinationMipLevel = 0)
+{
+	VkImageBlit region =
+	{
+		.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, sourceMipLevel, 0, 1 },
+		.srcOffsets = { VkOffset3D{}, sourceEnd },
+		.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, destinationMipLevel, 0, 1 },
+		.dstOffsets = { VkOffset3D{}, destinationEnd }
+	};
+	vkCmdBlitImage(commandBuffer,
+		source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		1, &region, filter);
+}
+}
 
 class pipelineLayout
 {
