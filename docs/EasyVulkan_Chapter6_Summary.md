@@ -159,9 +159,9 @@ Dynamic Rendering 是最终默认路径。它不调用 `CreateRpwf_Screen()` 或
 Ch6-0 在用户更改验证要求之前实际执行过：
 
 ```powershell
-D:\VulkanSDK\1.4.350.0\Bin\glslc.exe shader\FirstTriangle.vert.shader -o out\build\vs18-x64-debug\Vulkan-Renderer\shader\FirstTriangle.vert.spv
-D:\VulkanSDK\1.4.350.0\Bin\glslc.exe shader\FirstTriangle.frag.shader -o out\build\vs18-x64-debug\Vulkan-Renderer\shader\FirstTriangle.frag.spv
-D:\VulkanSDK\1.4.350.0\Bin\spirv-val.exe <两个 SPIR-V 文件>
+& "$env:VULKAN_SDK\Bin\glslc.exe" shader\FirstTriangle.vert.shader -o out\build\vs18-x64-debug\Vulkan-Renderer\shader\FirstTriangle.vert.spv
+& "$env:VULKAN_SDK\Bin\glslc.exe" shader\FirstTriangle.frag.shader -o out\build\vs18-x64-debug\Vulkan-Renderer\shader\FirstTriangle.frag.spv
+& "$env:VULKAN_SDK\Bin\spirv-val.exe" <两个 SPIR-V 文件>
 cmake --build --preset vs18-x64-debug --config Debug
 $env:VK_INSTANCE_LAYERS='VK_LAYER_KHRONOS_validation'
 .\Debug\Vulkan-Renderer.exe --self-test

@@ -14,12 +14,9 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 
-find_package(glfw3 REQUIRED)
-find_package(glm REQUIRED)
 find_package(Vulkan 1.4.335 REQUIRED)
-find_package(tinyobjloader REQUIRED)
-find_package(tinygltf REQUIRED)
-find_package(KTX REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
 
 # Set up Vulkan C++ module only if enabled
 if(ENABLE_CPP20_MODULE)
@@ -72,7 +69,6 @@ endif()
 find_package(stb REQUIRED)
 set(STB_INCLUDEDIR ${stb_INCLUDE_DIRS})
 
-find_program(SLANGC_EXECUTABLE slangc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin" REQUIRED)
 find_program(GLSLC_EXECUTABLE glslc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin" REQUIRED)
 
 set(TEMPLATE_DIR ${CMAKE_BINARY_DIR}/${TEMPLATE_NAME})
@@ -101,7 +97,7 @@ add_executable (${TEMPLATE_NAME}
 	stb_image.cpp)
 set_target_properties (${TEMPLATE_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${TEMPLATE_DIR})
 set_target_properties (${TEMPLATE_NAME} PROPERTIES CXX_STANDARD 20)
-target_link_libraries (${TEMPLATE_NAME} Vulkan::cppm glfw)
+target_link_libraries (${TEMPLATE_NAME} Vulkan::cppm glfw glm::glm)
 target_include_directories (${TEMPLATE_NAME} PRIVATE ${STB_INCLUDEDIR})
 if(MSVC)
   target_compile_options(${TEMPLATE_NAME} PRIVATE /utf-8)
@@ -120,24 +116,6 @@ if(WIN32)
     set_target_properties(${TEMPLATE_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${TEMPLATE_DIR})
   endif()
 endif()
-
-# Slang shader
-set (SHADER_TARGET ${TEMPLATE_NAME}Shader)
-set (SHADERS_DIR ${TEMPLATE_DIR}/shaders)
-set (SHADER_OUTPUT ${SHADERS_DIR}/slang.spv)
-set (SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shader.slang")
-set (ENTRY_POINTS -entry vertMain -entry fragMain)
-add_custom_command(
-  OUTPUT  ${SHADER_OUTPUT}
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
-  COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${TEMPLATE_DIR}/shaders/slang.spv
-  WORKING_DIRECTORY ${SHADERS_DIR}
-  DEPENDS ${SHADER_SOURCES}
-  COMMENT "Compiling Slang Shaders"
-  VERBATIM
-)
-add_custom_target(${SHADER_TARGET} DEPENDS ${SHADER_OUTPUT})
-add_dependencies(${TEMPLATE_NAME} ${SHADER_TARGET})
 
 # GLSL shaders. Each source keeps its stage in the filename, for example
 # Offscreen.vert.shader -> Offscreen.vert.spv.
