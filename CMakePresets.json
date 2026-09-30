@@ -1,46 +1,47 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": {
-    "major": 3,
-    "minor": 29,
-    "patch": 0
-  },
+  "cmakeMinimumRequired": { "major": 3, "minor": 29, "patch": 0 },
   "configurePresets": [
     {
-      "name": "vs18-x64-debug",
-      "displayName": "Visual Studio 18 Insiders x64 Debug",
-      "generator": "Visual Studio 18 2026",
-      "architecture": "x64",
+      "name": "vcpkg-base",
+      "hidden": true,
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "cacheVariables": {
-        "CMAKE_GENERATOR_INSTANCE": "C:/Program Files/Microsoft Visual Studio/18/Insiders",
-        "CMAKE_TOOLCHAIN_FILE": "D:/Computer Graphics/Vulkan/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
-      },
-      "environment": {
-        "VULKAN_SDK": "D:/VulkanSDK/1.4.350.0",
-        "VK_SDK_PATH": "D:/VulkanSDK/1.4.350.0",
-        "VK_LAYER_PATH": "D:/VulkanSDK/1.4.350.0/Bin",
-        "VCPKG_DEFAULT_BINARY_CACHE": "D:/Computer Graphics/Vulkan/.deps/vcpkg-binary-cache"
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       }
     },
     {
-      "name": "vs18-x64-release",
-      "displayName": "Visual Studio 18 Insiders x64 Release",
-      "inherits": "vs18-x64-debug",
-      "binaryDir": "${sourceDir}/out/build/${presetName}"
+      "name": "windows-debug",
+      "displayName": "Visual Studio 2022 x64 Debug",
+      "inherits": "vcpkg-base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": { "VCPKG_TARGET_TRIPLET": "x64-windows" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Visual Studio 2022 x64 Release",
+      "inherits": "windows-debug"
+    },
+    {
+      "name": "ninja-debug",
+      "displayName": "Ninja Debug",
+      "inherits": "vcpkg-base",
+      "generator": "Ninja",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "ninja-release",
+      "displayName": "Ninja Release",
+      "inherits": "ninja-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     }
   ],
   "buildPresets": [
-    {
-      "name": "vs18-x64-debug",
-      "configurePreset": "vs18-x64-debug",
-      "configuration": "Debug"
-    },
-    {
-      "name": "vs18-x64-release",
-      "configurePreset": "vs18-x64-release",
-      "configuration": "Release"
-    }
+    { "name": "windows-debug", "configurePreset": "windows-debug", "configuration": "Debug" },
+    { "name": "windows-release", "configurePreset": "windows-release", "configuration": "Release" },
+    { "name": "ninja-debug", "configurePreset": "ninja-debug" },
+    { "name": "ninja-release", "configurePreset": "ninja-release" }
   ]
 }
